@@ -11,6 +11,7 @@ from datetime import datetime
 import os
 import torch
 import pickle
+import csv
 
 class ChatSession:
     def __init__(self):
@@ -40,7 +41,7 @@ class LLMManager:
         n_gpu_layers = -1
         n_batch = 2048
         n_ctx = 2048
-        quantize = "Q4_K_M"
+        
 
         if os.path.exists(self._multimodal_llm_cache_path):
             with open(self._multimodal_llm_cache_path, 'rb') as f:
@@ -53,13 +54,13 @@ class LLMManager:
                 n_batch=n_batch,
                 callback_manager=callback_manager,
                 n_ctx=n_ctx,
-                verbose=True,
-                quantize=quantize
+                verbose=True
+                
             )
             with open(self._multimodal_llm_cache_path, 'wb') as f:
                 pickle.dump(self._multimodal_llm, f)
             print("Initialized and saved multimodal LLM to cache")
-            
+
         if os.path.exists(self._medical_llm_cache_path):
             with open(self._medical_llm_cache_path, 'rb') as f:
                 self._medical_llm = pickle.load(f)
@@ -71,8 +72,7 @@ class LLMManager:
                 n_batch=n_batch,
                 callback_manager=callback_manager,
                 n_ctx=n_ctx,
-                verbose=True,
-                quantize=quantize  # Verbose is required to pass to the callback manager
+                verbose=True  # Verbose is required to pass to the callback manager
             )
             with open(self._medical_llm_cache_path, 'wb') as f:
                 pickle.dump(self._medical_llm, f)
@@ -137,6 +137,7 @@ class LLMManager:
 class VectorDBManager:
     _instance = None
     _vector_store = None
+    _embeddings = None
 
     @classmethod
     def get_instance(cls):
@@ -148,20 +149,64 @@ class VectorDBManager:
         if VectorDBManager._instance is not None:
             raise Exception("Use get_instance() instead")
         
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
-        loader = TextLoader("medical_data.csv")
-        docs = loader.load()
+        self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
+        
 
-        text_splitter = CharacterTextSplitter(separator="\n", chunk_size=1100, chunk_overlap=50)
-        all_splits = text_splitter.split_documents(docs)
+        embeddings_path = "medical_data_embeddings.pkl"
+        all_splits_path = "medical_data_documents.pkl"
 
-        self._vector_store = Chroma(
-            collection_name="medical_data",
-            embedding_function=embeddings,
-            persist_directory="./chroma_langchain_db",
-        )
-        _ = self._vector_store.add_documents(documents=all_splits)
+        if os.path.exists("chroma_langchain_db"):
+            # Load existing Chroma DB
+            self._vector_store = Chroma(
+                collection_name="medical_data",
+                embedding_function=self._embeddings,
+                persist_directory="./chroma_langchain_db"
+            )
+            print("Loaded existing Chroma DB")
+        else:
+            # Check if embeddings and documents are pre-calculated
+            if os.path.exists(embeddings_path) and os.path.exists(all_splits_path):
+                # Load pre-calculated embeddings and documents
+                with open(embeddings_path, "rb") as f:
+                    _embeddings = pickle.load(f)
+                with open(all_splits_path, "rb") as f:
+                    all_splits = pickle.load(f)
+
+                # Create Chroma DB from pre-calculated embeddings
+                self._vector_store = Chroma(
+                    embedding_function=self._embeddings,
+                    collection_name="medical_data",
+                    persist_directory="./chroma_langchain_db"
+                )
+                _ = self._vector_store.add_documents(documents=all_splits)
+                print("Loaded Chroma DB from pre-calculated embeddings")
+            else:
+                # Calculate embeddings and create Chroma DB
+                loader = TextLoader("medical_data.csv")
+                docs = loader.load()
+
+                text_splitter = CharacterTextSplitter(separator="\n", chunk_size=1100, chunk_overlap=50)
+                all_splits = text_splitter.split_documents(docs)
+
+                self._vector_store = Chroma(
+                    embedding_function=self._embeddings,
+                    collection_name="medical_data",
+                    persist_directory="./chroma_langchain_db"
+                )
+                _ = self._vector_store.add_documents(documents=all_splits)
+                # Persist embeddings and documents for future use
+                with open(embeddings_path, "wb") as f:
+                    pickle.dump(self._embeddings, f)
+                with open(all_splits_path, "wb") as f:
+                    pickle.dump(all_splits, f)
+                print("Created Chroma DB and persisted embeddings")
+
+        
 
     @property
     def vector_store(self):
         return self._vector_store
+
+   
+
+    

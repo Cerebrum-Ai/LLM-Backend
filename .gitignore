@@ -20,12 +20,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+*.pkl
 # Virtual Environment
 venv/
 ENV/
 myenv/
 llama-cpp-python/
+GPTQ/
 
 # VS Code
 .vscode/
