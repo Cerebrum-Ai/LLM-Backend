@@ -45,7 +45,7 @@ class LLMManager:
             verbose=True,
         )
         self._medical_llm = LlamaCpp(
-            model_path=r"/content/LLM-Backend/phi-2.Q5_K_M.gguff",
+            model_path=r"/content/LLM-Backend/phi-2.Q5_K_M.gguf",
             n_gpu_layers=n_gpu_layers,
             n_batch=n_batch,
             callback_manager=callback_manager,
