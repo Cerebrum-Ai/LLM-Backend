@@ -5,6 +5,10 @@ from llm_chat import init_llm_input, post_llm_input, LLMManager
 from singleton import VectorDBManager
 from langchain_core.documents import Document
 from threading import Thread
+from flask_ngrok import run_with_ngrok
+
+
+
 
 import base64
 
@@ -15,6 +19,7 @@ def image_to_base64_data_uri(file_path):
 
 
 app = Flask(__name__)
+run_with_ngrok(app)
 llm_instance = None
 is_initialized = False
 vector_db_instance = None
@@ -214,4 +219,4 @@ def get_status():
 if __name__ == '__main__':
     init_thread = Thread(target=initialize_llm)
     init_thread.start()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run()
