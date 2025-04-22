@@ -5,4 +5,5 @@ langgraph
 langchain-huggingface
 flask
 ngrok
-waitress
+transformers
+pickle

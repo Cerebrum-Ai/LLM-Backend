@@ -4,12 +4,10 @@ from langgraph.graph import START, StateGraph
 from llm_chat import init_llm_input, post_llm_input, LLMManager
 from singleton import VectorDBManager
 from langchain_core.documents import Document
-from threading import Thread
+from threading import Thread, Event
 import ngrok
 import time
-import threading
 import sys
-
 
 
 
@@ -25,6 +23,7 @@ app = Flask(__name__)
 llm_instance = None
 is_initialized = False
 vector_db_instance = None
+shutdown_event = Event()
 
 def initialize_llm():
     global llm_instance,vector_db_instance, is_initialized
@@ -179,19 +178,13 @@ def chat():
             llm_instance.delete_session(initial_state["session_id"])
 
         vectordb_data = response.get("vectordb_results", "")
-        if vectordb_data:
-            # Split by commas and take every third item
-            items = vectordb_data.split(',')
-            filtered_items = items[::3]
-            processed_vectordb = ','.join(filtered_items) if filtered_items else ""
-        else:
-            processed_vectordb = ""
+        
 
         return jsonify({
             'status': 'success',
             'analysis': {
                 'initial_diagnosis': response.get("initial_diagnosis"),
-                'vectordb_results': processed_vectordb,
+                'vectordb_results': vectordb_data,
                 'final_analysis': response.get("final_analysis")
             }
         })
@@ -231,23 +224,29 @@ def run_ngrok():
             domain="monthly-vital-reptile.ngrok-free.app"
         )
         print(f"Ingress established at: {listener.url()}")
-        
-        while True:
-            time.sleep(1)
-            
+
+        while not shutdown_event.is_set():
+            time.sleep(1)  # Check every second
+                  
     except Exception as e:
-        print(f"Ngrok error: {str(e)}")
-        raise
+        if shutdown_event.is_set():
+            print("Ngrok interrupted by shutdown signal.")
+        else:
+            print(f"Ngrok error: {str(e)}")
     finally:
-        try:
-            ngrok.disconnect()
-        except:
-            pass
+        print("Cleaning up ngrok...")
+        if listener:
+            try:
+                ngrok.disconnect()
+                print("Ngrok disconnected successfully")
+                
+            except Exception as e:
+                print(f"Error disconnecting ngrok: {str(e)}")
+                
 
 def wait_for_flask(port, max_retries=5):
     """Wait for Flask to start accepting connections"""
     import socket
-    import time
     
     for i in range(max_retries):
         try:
@@ -260,18 +259,15 @@ def wait_for_flask(port, max_retries=5):
 
 if __name__ == '__main__':
     try:
-        init_thread = Thread(target=initialize_llm)
+        init_thread = Thread(target=initialize_llm, daemon=True)
+        ngrok_thread = Thread(target=run_ngrok, daemon=True)
         init_thread.start()
-        flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False))
-        flask_thread.start()
-        if wait_for_flask(5000):
-            print("Flask server is ready")
-            # Now start ngrok
-            run_ngrok()
-        else:
-            print("Failed to start Flask server")
-            sys.exit(1)
+        ngrok_thread.start()
+        app.run(host='0.0.0.0', port=5000, debug=False) # changed to false
     except KeyboardInterrupt:
-        print("Shutting down...")
-        exit()
+        print("\nShutting down application...")
+    finally:
+        shutdown_event.set()
+        # Add any additional cleanup here
+        sys.exit(0)
         
