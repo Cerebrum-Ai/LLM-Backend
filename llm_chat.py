@@ -15,14 +15,12 @@ def init_llm_input(question, image=None):
         template = """Question: {question}
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
-1. List ONLY disease names
+1. List ONLY disease names (upto 5)
 2. Separate with commas
 3. NO explanations
 4. NO additional text
 5. NO symptoms
 6. NO details
-
-Format: Disease1, Disease2, Disease3
 
 Answer: """
     else:
@@ -35,8 +33,6 @@ Instructions:
 4. NO additional text
 5. NO symptoms
 6. NO details
-
-Format: Disease1, Disease2, Disease3
 
 Answer: """
     

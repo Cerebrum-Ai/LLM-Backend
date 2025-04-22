@@ -5,6 +5,10 @@ from llm_chat import init_llm_input, post_llm_input, LLMManager
 from singleton import VectorDBManager
 from langchain_core.documents import Document
 from threading import Thread
+import ngrok
+import time
+import threading
+import sys
 
 
 
@@ -214,7 +218,60 @@ def get_status():
         'message': 'All systems ready' if is_initialized else 'Systems are initializing'
     })
 
+def run_ngrok():
+    """Synchronous wrapper for async ngrok handler"""
+    try:
+        # Initialize ngrok with your authtoken
+        ngrok.set_auth_token("2uHfQak8CxEWThSHdtiVOIC14kq_5px1cRz1ammGDZYnboB2g")
+        # Wait a moment for cleanup
+        time.sleep(2)
+        # Start new tunnel
+        listener = ngrok.forward(
+            5000,
+            domain="monthly-vital-reptile.ngrok-free.app"
+        )
+        print(f"Ingress established at: {listener.url()}")
+        
+        while True:
+            time.sleep(1)
+            
+    except Exception as e:
+        print(f"Ngrok error: {str(e)}")
+        raise
+    finally:
+        try:
+            ngrok.disconnect()
+        except:
+            pass
+
+def wait_for_flask(port, max_retries=5):
+    """Wait for Flask to start accepting connections"""
+    import socket
+    import time
+    
+    for i in range(max_retries):
+        try:
+            with socket.create_connection(("localhost", port), timeout=1.0):
+                return True
+        except (ConnectionRefusedError, socket.timeout):
+            print(f"Waiting for Flask to start (attempt {i+1}/{max_retries})...")
+            time.sleep(2)
+    return False
+
 if __name__ == '__main__':
-    init_thread = Thread(target=initialize_llm)
-    init_thread.start()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    try:
+        init_thread = Thread(target=initialize_llm)
+        init_thread.start()
+        flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False))
+        flask_thread.start()
+        if wait_for_flask(5000):
+            print("Flask server is ready")
+            # Now start ngrok
+            run_ngrok()
+        else:
+            print("Failed to start Flask server")
+            sys.exit(1)
+    except KeyboardInterrupt:
+        print("Shutting down...")
+        ngrok.disconnect()
+        
