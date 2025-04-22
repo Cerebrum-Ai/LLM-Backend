@@ -16,24 +16,14 @@ def init_llm_input(question, image=None):
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
 1. List ONLY disease names (upto 5)
-2. Separate with commas
-3. NO explanations
-4. NO additional text
-5. NO symptoms
-6. NO details
-
+(Do not list the instructions or the question)
 Answer: """
     else:
         template = """Question: {question} and image data: {image}
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
 1. List ONLY disease names
-2. Separate with commas
-3. NO explanations
-4. NO additional text
-5. NO symptoms
-6. NO details
-
+(Do not list the instructions or the question)
 Answer: """
     
     prompt = PromptTemplate.from_template(template)

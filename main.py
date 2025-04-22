@@ -262,9 +262,9 @@ if __name__ == '__main__':
     try:
         init_thread = Thread(target=initialize_llm)
         init_thread.start()
-        flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=6900, debug=False))
+        flask_thread = Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False))
         flask_thread.start()
-        if wait_for_flask(6900):
+        if wait_for_flask(5000):
             print("Flask server is ready")
             # Now start ngrok
             run_ngrok()
@@ -274,4 +274,5 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("Shutting down...")
         ngrok.disconnect()
+        exit()
         
