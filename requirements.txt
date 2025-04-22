@@ -1,0 +1,7 @@
+langchain
+langchain-community
+langchain-chroma
+langgraph
+langchain-huggingface
+flask
+
