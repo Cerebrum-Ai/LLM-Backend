@@ -37,7 +37,7 @@ class LLMManager:
         n_batch = 2048
         n_ctx = 2048
         self._multimodal_llm = LlamaCpp(
-            model_path=r"C:\Users\Ankit\Desktop\Code\websites\Aventus-3.0\Bio-Medical-MultiModal-Llama-3-8B-V1.i1-Q4_K_M.gguf",
+            model_path=r"/content/LLM-Backend/Bio-Medical-MultiModal-Llama-3-8B-V1.i1-Q4_K_M.gguf",
             n_gpu_layers=n_gpu_layers,
             n_batch=n_batch,
             callback_manager=callback_manager,
@@ -45,7 +45,7 @@ class LLMManager:
             verbose=True,
         )
         self._medical_llm = LlamaCpp(
-            model_path=r"C:\Users\Ankit\Desktop\Code\websites\Aventus-3.0\phi-2.Q5_K_M.gguf",
+            model_path=r"/content/LLM-Backend/phi-2.Q5_K_M.gguff",
             n_gpu_layers=n_gpu_layers,
             n_batch=n_batch,
             callback_manager=callback_manager,
