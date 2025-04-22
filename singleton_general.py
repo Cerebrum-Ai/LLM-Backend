@@ -9,6 +9,7 @@ from threading import Lock
 import uuid
 from datetime import datetime
 
+
 class ChatSession:
     def __init__(self):
         self.history = ChatMessageHistory()

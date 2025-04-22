@@ -4,4 +4,5 @@ langchain-chroma
 langgraph
 langchain-huggingface
 flask
+flask-ngrok
 
