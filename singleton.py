@@ -8,6 +8,9 @@ from langchain.memory import ChatMessageHistory
 from threading import Lock
 import uuid
 from datetime import datetime
+import os
+import torch
+import pickle
 
 class ChatSession:
     def __init__(self):
@@ -21,6 +24,8 @@ class LLMManager:
     _medical_llm = None
     _sessions = {}
     _session_lock = Lock()
+    _multimodal_llm_cache_path = "multimodal_llm.pkl"
+    _medical_llm_cache_path = "medical_llm.pkl"
 
     @classmethod
     def get_instance(cls):
@@ -31,27 +36,48 @@ class LLMManager:
     def __init__(self):
         if LLMManager._instance is not None:
             raise Exception("Use get_instance() instead")
-        
         callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
         n_gpu_layers = -1
         n_batch = 2048
         n_ctx = 2048
-        self._multimodal_llm = LlamaCpp(
-            model_path=r"C:\Users\Ankit\Desktop\Code\websites\Aventus-3.0\Bio-Medical-MultiModal-Llama-3-8B-V1.i1-Q4_K_M.gguf",
-            n_gpu_layers=n_gpu_layers,
-            n_batch=n_batch,
-            callback_manager=callback_manager,
-            n_ctx=n_ctx,
-            verbose=True,
-        )
-        self._medical_llm = LlamaCpp(
-            model_path=r"C:\Users\Ankit\Desktop\Code\websites\Aventus-3.0\phi-2.Q5_K_M.gguf",
-            n_gpu_layers=n_gpu_layers,
-            n_batch=n_batch,
-            callback_manager=callback_manager,
-            n_ctx=n_ctx,
-            verbose=True,  # Verbose is required to pass to the callback manager
-        )
+        quantize = "Q4_K_M"
+
+        if os.path.exists(self._multimodal_llm_cache_path):
+            with open(self._multimodal_llm_cache_path, 'rb') as f:
+                self._multimodal_llm = pickle.load(f)
+            print("Loaded multimodal LLM from cache")
+        else:    
+            self._multimodal_llm = LlamaCpp(
+                model_path=r"C:\Users\Ankit\Desktop\Code\websites\Aventus-3.0\Bio-Medical-MultiModal-Llama-3-8B-V1.i1-Q4_K_M.gguf",
+                n_gpu_layers=n_gpu_layers,
+                n_batch=n_batch,
+                callback_manager=callback_manager,
+                n_ctx=n_ctx,
+                verbose=True,
+                quantize=quantize
+            )
+            with open(self._multimodal_llm_cache_path, 'wb') as f:
+                pickle.dump(self._multimodal_llm, f)
+            print("Initialized and saved multimodal LLM to cache")
+            
+        if os.path.exists(self._medical_llm_cache_path):
+            with open(self._medical_llm_cache_path, 'rb') as f:
+                self._medical_llm = pickle.load(f)
+            print("Loaded medical LLM from cache")
+        else:
+            self._medical_llm = LlamaCpp(
+                model_path=r"C:\Users\Ankit\Desktop\Code\websites\Aventus-3.0\phi-2.Q5_K_M.gguf",
+                n_gpu_layers=n_gpu_layers,
+                n_batch=n_batch,
+                callback_manager=callback_manager,
+                n_ctx=n_ctx,
+                verbose=True,
+                quantize=quantize  # Verbose is required to pass to the callback manager
+            )
+            with open(self._medical_llm_cache_path, 'wb') as f:
+                pickle.dump(self._medical_llm, f)
+            print("Initialized and saved medical LLM to cache")
+
 
     @property
     def llm(self):
