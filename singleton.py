@@ -59,6 +59,11 @@ class LLMManager:
                 use_mmap=True,
                 f16_kv=True,
                 seed=-1,
+                max_tokens=45,
+                temperature=0.5,
+                top_p=0.95,
+                repeat_penalty=1.2,
+                top_k=50,
                 n_threads=6,           # Adjust based on your CPU cores          # Use primary GPU
                 tensor_split=None
                 
@@ -82,6 +87,11 @@ class LLMManager:
                 use_mlock=False,
                 use_mmap=True,
                 f16_kv=True,
+                max_tokens=100,
+                temperature=0.3,
+                top_p=0.95,
+                repeat_penalty=1.2,
+                top_k=50,
                 seed=-1,
                 n_threads=6,           # Adjust based on your CPU cores                    # Use primary GPU
                 tensor_split=None   # Verbose is required to pass to the callback manager

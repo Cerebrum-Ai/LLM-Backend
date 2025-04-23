@@ -38,7 +38,7 @@ class LLMManager:
         if LLMManager._instance is not None:
             raise Exception("Use get_instance() instead")
         callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
-        n_gpu_layers =  30
+        n_gpu_layers =  20
         n_batch = 512
         n_ctx = 2048
         
@@ -49,7 +49,7 @@ class LLMManager:
             print("Loaded multimodal LLM from cache")
         else:    
             self._multimodal_llm = LlamaCpp(
-                model_path=r"Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf",
+                model_path=r"/content/LLM-Backend/Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf",
                 n_gpu_layers=n_gpu_layers,
                 n_batch=n_batch,
                 callback_manager=callback_manager,
@@ -59,6 +59,11 @@ class LLMManager:
                 use_mmap=True,
                 f16_kv=True,
                 seed=-1,
+                max_tokens=45,
+                temperature=0.5,
+                top_p=0.95,
+                repeat_penalty=1.2,
+                top_k=50,
                 n_threads=6,           # Adjust based on your CPU cores          # Use primary GPU
                 tensor_split=None
                 
@@ -73,7 +78,7 @@ class LLMManager:
             print("Loaded medical LLM from cache")
         else:
             self._medical_llm = LlamaCpp(
-                model_path=r"phi-2.Q5_K_M.gguf",
+                model_path=r"/content/LLM-Backend/phi-2.Q5_K_M.gguf",
                 n_gpu_layers=n_gpu_layers,
                 n_batch=n_batch,
                 callback_manager=callback_manager,
@@ -82,6 +87,11 @@ class LLMManager:
                 use_mlock=False,
                 use_mmap=True,
                 f16_kv=True,
+                max_tokens=100,
+                temperature=0.3,
+                top_p=0.95,
+                repeat_penalty=1.2,
+                top_k=50,
                 seed=-1,
                 n_threads=6,           # Adjust based on your CPU cores                    # Use primary GPU
                 tensor_split=None   # Verbose is required to pass to the callback manager
