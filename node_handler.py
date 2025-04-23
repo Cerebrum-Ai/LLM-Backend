@@ -7,6 +7,7 @@ from datetime import datetime
 import requests
 import sys
 import atexit
+from waitress import serve # Import waitress
 
 app = Flask(__name__)
 
@@ -197,58 +198,59 @@ def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'message': 'Node handler is ready'})
 
-def run_flask():
-    """Run Flask application with proper initialization"""
+# Renamed from run_flask and removed server start logic
+def initialize_app():
+    """Initialize the Flask application and database"""
     try:
         # Register cleanup handlers
         atexit.register(cleanup)
-        
+
         # Initialize database
         init_db()
         print("\n=== Database Initialization ===")
         print("✓ Database initialized successfully")
-        
+
         # Print all registered routes for debugging
         print("\n=== Registered Routes ===")
         for rule in app.url_map.iter_rules():
             print(f"✓ {rule.endpoint}: {rule.methods} {rule}")
-        
-        # Wait for Flask to be ready
-        def wait_for_flask():
-            import socket
-            max_retries = 10
-            retry_delay = 1
-            
-            for attempt in range(max_retries):
-                try:
-                    # First check if the health endpoint is responding
-                    response = requests.get('http://localhost:8000/health', timeout=1.0)
-                    if response.status_code == 200:
-                        print("✓ Flask server is ready and responding")
-                        return True
-                    else:
-                        print(f"Health check returned {response.status_code}, retrying...")
-                except (ConnectionRefusedError, requests.exceptions.RequestException):
-                    print(f"Waiting for Flask to start (attempt {attempt + 1}/{max_retries})...")
-                    time.sleep(retry_delay)
-            return False
-        
-        # Start Flask in a separate thread
-        print("\n=== Starting Flask Server ===")
-        flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=8000, debug=False))
-        flask_thread.daemon = True
-        flask_thread.start()
-        
-        # Wait for Flask to be ready
-        if not wait_for_flask():
-            raise Exception("Flask server failed to start")
-        
-        print("✓ Node handler is ready to accept connections")
+
+        print("✓ Application initialized successfully")
         return True
-        
+
     except Exception as e:
-        print(f"✗ Error starting Flask: {str(e)}")
+        print(f"✗ Error during app initialization: {str(e)}")
         return False
+
+def wait_for_server_ready(url='http://localhost:8000/health', timeout=30):
+    """Wait for the WSGI server to be ready"""
+    start_time = time.time()
+    max_retries = 10
+    retry_delay = 1
+
+    print(f"Waiting for server to be ready at {url}...")
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, timeout=1.0)
+            if response.status_code == 200:
+                print(f"✓ Server is ready and responding (took {time.time() - start_time:.2f}s)")
+                return True
+            else:
+                print(f"Health check returned {response.status_code}, retrying...")
+        except (ConnectionRefusedError, requests.exceptions.RequestException) as e:
+            print(f"Waiting for server (attempt {attempt + 1}/{max_retries}): {e}")
+
+        if time.time() - start_time > timeout:
+            print(f"✗ Server did not become ready within {timeout} seconds.")
+            return False
+
+        time.sleep(retry_delay)
+        # Optional: Increase delay slightly for subsequent retries
+        # retry_delay = min(retry_delay + 0.5, 5)
+
+    print(f"✗ Server failed to start after {max_retries} attempts.")
+    return False
+
 
 def run_ngrok():
     try:
@@ -529,38 +531,52 @@ if __name__ == '__main__':
         import signal
         def handle_shutdown(signum, frame):
             print(f"\nReceived signal {signum}. Starting shutdown...")
-            cleanup()
+            # Cleanup is registered with atexit, so it should run automatically
+            # cleanup() # Optional: call explicitly if atexit doesn't cover all cases
             sys.exit(0)
-        
+
         signal.signal(signal.SIGINT, handle_shutdown)
         signal.signal(signal.SIGTERM, handle_shutdown)
-        
-        # Start Flask and wait for it to be ready
-        print("\n=== Starting Node Handler ===")
-        if not run_flask():
-            print("✗ Failed to start Flask server")
+
+        # Initialize the application components
+        print("\n=== Initializing Node Handler ===")
+        if not initialize_app():
+            print("✗ Failed to initialize the application")
             sys.exit(1)
-        
+
+        # Start Waitress server in a separate thread
+        print("\n=== Starting Waitress Server ===")
+        wsgi_thread = threading.Thread(target=lambda: serve(app, host='0.0.0.0', port=8000))
+        wsgi_thread.daemon = True # Daemonize thread to exit when main thread exits
+        wsgi_thread.start()
+
+        # Wait for Waitress server to be ready
+        if not wait_for_server_ready():
+             raise Exception("Waitress server failed to start or become ready")
+
         # Start ngrok and get the URL
         print("\n=== Setting up ngrok tunnel ===")
-        ngrok_url = run_ngrok()
+        ngrok_url = run_ngrok() # run_ngrok already contains checks for server readiness
         if ngrok_url:
             print(f"✓ Node handler is ready at: {ngrok_url}")
             print("You can now start your nodes.")
             print("Waiting for node connections...")
-            
-            # Keep the main thread alive
+
+            # Keep the main thread alive (Waitress runs in a daemon thread)
             while True:
-                time.sleep(1)
+                time.sleep(60) # Keep main thread alive, check less frequently
         else:
-            print("✗ Node handler failed to start properly")
+            print("✗ Node handler failed to start properly (ngrok setup failed)")
+            # No need to call cleanup() here, atexit should handle it
             sys.exit(1)
-            
+
     except KeyboardInterrupt:
-        print("\nReceived keyboard interrupt. Starting shutdown...")
-        cleanup()
+        print("\nReceived keyboard interrupt. Shutting down...")
+        # No need to call cleanup() here, atexit should handle it
         sys.exit(0)
     except Exception as e:
         print(f"✗ Failed to start node handler: {str(e)}")
-        cleanup()
-        sys.exit(1) 
+        import traceback
+        print(traceback.format_exc()) # Print full traceback for debugging
+        # No need to call cleanup() here, atexit should handle it
+        sys.exit(1)
