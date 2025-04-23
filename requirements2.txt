@@ -1,3 +1,5 @@
-Install llama-cpp-python as per the guide in llama-cpp-python page of langchain
+Install llama-cpp-python using the guide in llama-cpp-python page of langchain for mac and cpu only
+for windows CMAKE_ARGS="-DGGML_CUDA=on -DGGML_CUDA_FORCE_CUBLAS=on -DLLAVA_BUILD=off -DCMAKE_CUDA_ARCHITECTURES=native" FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
+for linux 
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 
