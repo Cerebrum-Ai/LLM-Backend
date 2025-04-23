@@ -39,10 +39,8 @@ def initialize_llm():
         print("Initializing LLM...")
         llm_instance = LLMManager.get_instance()
         if llm_instance.llm:
-            raise RuntimeError("Failed to initialize LLM")
-# OR remove raise and just handle cleanly:
-            print("LLM init failed")
-            is_initialized = False
+            print("LLM initialized and ready")
+            is_initialized = True
         else:
             raise RuntimeError("Failed to initialize LLM")
             is_initialized = False
