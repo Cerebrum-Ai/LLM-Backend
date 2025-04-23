@@ -6,4 +6,3 @@ langchain-huggingface
 flask
 ngrok
 transformers
-pickle

@@ -8,15 +8,36 @@ from threading import Thread, Event
 import ngrok
 import time
 import sys
-
-
+import requests
+import threading
+import atexit
 
 import base64
 
-def image_to_base64_data_uri(file_path):
-    with open(file_path, "rb") as img_file:
-        base64_data = base64.b64encode(img_file.read()).decode('utf-8')
-        return f"data:image/png;base64,{base64_data}"
+# Add these constants at the top of the file
+NODE_HANDLER_URL = "https://pup-improved-labrador.ngrok-free.app"
+HEARTBEAT_INTERVAL = 30  # seconds
+
+# Add this global variable at the top with other constants
+current_ngrok_url = None
+
+def image_to_base64_data_uri(input_source):
+    """
+    Convert an image to base64 data URI format.
+    input_source can be either a file path or a URL.
+    """
+    if input_source.startswith(('http://', 'https://')):
+        # If input is a URL, download the image
+        response = requests.get(input_source)
+        image_data = response.content
+    else:
+        # If input is a file path, read the file
+        with open(input_source, "rb") as img_file:
+            image_data = img_file.read()
+    
+    # Convert to base64
+    base64_data = base64.b64encode(image_data).decode('utf-8')
+    return f"data:image/png;base64,{base64_data}"
 
 
 app = Flask(__name__)
@@ -141,7 +162,7 @@ graph_builder.add_edge(START, "init")
 graph_builder.add_edge("init", "retrieve")
 graph_builder.add_edge("retrieve", "generate")
 graph = graph_builder.compile()
-
+@app.route('/api/chat', methods=['POST'])
 @app.route('/chat', methods=['POST'])
 @check_initialization
 def chat():
@@ -211,38 +232,303 @@ def get_status():
         'message': 'All systems ready' if is_initialized else 'Systems are initializing'
     })
 
+def wait_for_node_handler(max_retries=10):
+    """Wait for node handler to be ready"""
+    retry_count = 0
+    retry_delay = 2  # Start with 2 seconds
+    
+    while retry_count < max_retries:
+        try:
+            print(f"Attempting to connect to node handler (attempt {retry_count + 1}/{max_retries})...")
+            # Try the status endpoint
+            response = requests.get(f"{NODE_HANDLER_URL}/status", timeout=5)
+            if response.status_code == 200:
+                print("Successfully connected to node handler")
+                return True
+            else:
+                print(f"Unexpected status code: {response.status_code}")
+        except requests.exceptions.Timeout:
+            print("Connection timed out")
+        except requests.exceptions.ConnectionError:
+            print("Could not connect to node handler")
+        except Exception as e:
+            print(f"Error connecting to node handler: {str(e)}")
+        
+        # Exponential backoff
+        print(f"Retrying in {retry_delay} seconds...")
+        time.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, 30)  # Cap at 30 seconds
+        retry_count += 1
+    
+    print("Failed to connect to node handler after multiple attempts")
+    return False
+
+def register_with_node_handler():
+    """Register this node with the node handler"""
+    global current_ngrok_url
+    try:
+        # Wait for node handler to be ready
+        if not wait_for_node_handler():
+            print("Node handler not ready after multiple attempts")
+            return False
+            
+        print(f"Attempting to register with node handler at {NODE_HANDLER_URL}...")
+        response = requests.post(
+            f"{NODE_HANDLER_URL}/register", 
+            json={"url": current_ngrok_url},
+            timeout=5
+        )
+        if response.status_code == 200:
+            print("Successfully registered with node handler")
+            return True
+        else:
+            print(f"Failed to register with node handler: {response.text}")
+            return False
+    except Exception as e:
+        print(f"Error registering with node handler: {str(e)}")
+        return False
+
+def handle_node_handler_disconnect():
+    """Handle disconnection from node handler"""
+    print("Node handler disconnected. Attempting to reconnect...")
+    max_retries = 5
+    retry_delay = 2  # Start with 2 seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Try to reconnect
+            if register_with_node_handler():
+                print("Successfully reconnected to node handler")
+                return True
+            
+            # If registration failed, wait before retrying
+            print(f"Reconnection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)  # Cap at 30 seconds
+            
+        except Exception as e:
+            print(f"Error during reconnection attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)
+    
+    print("Failed to reconnect after multiple attempts")
+    return False
+
+def send_heartbeat():
+    """Send periodic heartbeat to node handler"""
+    global current_ngrok_url
+    consecutive_failures = 0
+    max_consecutive_failures = 1  # Reduced from 3 to 1 to be more responsive
+    reconnection_in_progress = False
+    
+    while not shutdown_event.is_set():
+        try:
+            if reconnection_in_progress:
+                time.sleep(HEARTBEAT_INTERVAL)
+                continue
+                
+            print("\nSending heartbeat to node handler...")
+            response = requests.post(
+                f"{NODE_HANDLER_URL}/heartbeat",
+                json={"url": current_ngrok_url},
+                timeout=5
+            )
+            if response.status_code == 200:
+                consecutive_failures = 0  # Reset on success
+                reconnection_in_progress = False
+                print("✓ Heartbeat successful")
+            else:
+                print(f"✗ Heartbeat failed with status code: {response.status_code}")
+                if response.text:
+                    print(f"Response: {response.text[:200]}...")  # Show first 200 chars of response
+                consecutive_failures += 1
+                if consecutive_failures >= max_consecutive_failures:
+                    print("\n=== Node Handler Connection Lost ===")
+                    print("Multiple heartbeat failures detected. Starting reconnection process...")
+                    reconnection_in_progress = True
+                    if handle_node_handler_disconnect():
+                        consecutive_failures = 0
+                        reconnection_in_progress = False
+                        print("✓ Successfully reconnected to node handler")
+        except requests.exceptions.Timeout:
+            print("✗ Heartbeat timed out")
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print("\n=== Node Handler Connection Lost ===")
+                print("Multiple heartbeat timeouts detected. Starting reconnection process...")
+                reconnection_in_progress = True
+                if handle_node_handler_disconnect():
+                    consecutive_failures = 0
+                    reconnection_in_progress = False
+                    print("✓ Successfully reconnected to node handler")
+        except requests.exceptions.ConnectionError:
+            print("✗ Could not connect to node handler")
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print("\n=== Node Handler Connection Lost ===")
+                print("Connection error detected. Starting reconnection process...")
+                reconnection_in_progress = True
+                if handle_node_handler_disconnect():
+                    consecutive_failures = 0
+                    reconnection_in_progress = False
+                    print("✓ Successfully reconnected to node handler")
+        except Exception as e:
+            print(f"✗ Error sending heartbeat: {str(e)}")
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print("\n=== Node Handler Connection Lost ===")
+                print("Error detected. Starting reconnection process...")
+                reconnection_in_progress = True
+                if handle_node_handler_disconnect():
+                    consecutive_failures = 0
+                    reconnection_in_progress = False
+                    print("✓ Successfully reconnected to node handler")
+        
+        time.sleep(HEARTBEAT_INTERVAL)
+
+def deregister_from_node_handler():
+    """Deregister this node from the node handler"""
+    global current_ngrok_url
+    try:
+        response = requests.post(
+            f"{NODE_HANDLER_URL}/deregister",
+            json={"url": current_ngrok_url},
+            timeout=5
+        )
+        if response.status_code == 200:
+            print("Successfully deregistered from node handler")
+            return True
+        else:
+            print(f"Failed to deregister from node handler: {response.text}")
+            return False
+    except Exception as e:
+        print(f"Error deregistering from node handler: {str(e)}")
+        return False
+
+@app.route('/deregister', methods=['POST'])
+def handle_deregister():
+    """Handle deregistration request from node handler"""
+    try:
+        data = request.json
+        if data and data.get('url') == current_ngrok_url:
+            print("\n=== Node Handler Shutdown Notice ===")
+            print("Received deregister request from node handler")
+            print("Node handler is shutting down. Preparing for reconnection...")
+            
+            # Start reconnection in a background thread
+            def reconnect_loop():
+                print("\n=== Reconnection Process ===")
+                print("Starting reconnection attempts...")
+                max_retries = 5
+                retry_delay = 2
+                
+                for attempt in range(max_retries):
+                    try:
+                        print(f"\nReconnection attempt {attempt + 1}/{max_retries}")
+                        print(f"Trying to connect to node handler at {NODE_HANDLER_URL}...")
+                        if handle_node_handler_disconnect():
+                            print("✓ Successfully reconnected to node handler")
+                            return
+                        print(f"✗ Reconnection attempt {attempt + 1} failed")
+                        print(f"Waiting {retry_delay} seconds before next attempt...")
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 30)
+                    except Exception as e:
+                        print(f"✗ Error during reconnection attempt {attempt + 1}: {str(e)}")
+                        if attempt < max_retries - 1:
+                            print(f"Waiting {retry_delay} seconds before next attempt...")
+                            time.sleep(retry_delay)
+                            retry_delay = min(retry_delay * 2, 30)
+                
+                print("\n=== Background Reconnection ===")
+                print("Initial reconnection attempts failed. Starting background reconnection process...")
+                attempt_count = 0
+                while not shutdown_event.is_set():
+                    try:
+                        attempt_count += 1
+                        print(f"\nBackground reconnection attempt {attempt_count}")
+                        print(f"Trying to connect to node handler at {NODE_HANDLER_URL}...")
+                        if handle_node_handler_disconnect():
+                            print("✓ Successfully reconnected to node handler")
+                            break
+                        print("✗ Reconnection failed")
+                        print("Waiting 10 seconds before next attempt...")
+                        time.sleep(10)
+                    except Exception as e:
+                        print(f"✗ Error in background reconnection: {str(e)}")
+                        print("Waiting 10 seconds before next attempt...")
+                        time.sleep(10)
+            
+            # Start the reconnection process in a background thread
+            reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
+            reconnect_thread.start()
+            
+            # Return 202 Accepted to indicate we're handling the request
+            return jsonify({
+                'status': 'accepted',
+                'message': 'Node is preparing for reconnection'
+            }), 202
+            
+        return jsonify({'error': 'Invalid request'}), 400
+    except Exception as e:
+        print(f"Error handling deregister request: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 def run_ngrok():
     """Synchronous wrapper for async ngrok handler"""
+    global current_ngrok_url
+    listener = None
     try:
         # Initialize ngrok with your authtoken
-        ngrok.set_auth_token("2uHfQak8CxEWThSHdtiVOIC14kq_5px1cRz1ammGDZYnboB2g")
+        ngrok.set_auth_token("2w7abiUJvdPSfZHUf09rSDALljd_2PKXFabETGCqX85EEWHLp")
         # Wait a moment for cleanup
         time.sleep(2)
         # Start new tunnel
         listener = ngrok.forward(
-            5000,
-            domain="monthly-vital-reptile.ngrok-free.app"
+            5050
         )
-        print(f"Ingress established at: {listener.url()}")
+        current_ngrok_url = listener.url()
+        print(f"Ingress established at: {current_ngrok_url}")
+        
+        # Register with node handler after ngrok is set up
+        if not register_with_node_handler():
+            print("Failed to register with node handler. Will keep trying...")
+            # Start a background thread to keep trying registration
+            def registration_retry():
+                while not shutdown_event.is_set():
+                    if register_with_node_handler():
+                        break
+                    time.sleep(10)  # Wait 10 seconds between attempts
+            
+            registration_thread = threading.Thread(target=registration_retry, daemon=True)
+            registration_thread.start()
+        
+        # Start heartbeat thread
+        heartbeat_thread = threading.Thread(target=send_heartbeat, daemon=True)
+        heartbeat_thread.start()
 
         while not shutdown_event.is_set():
             time.sleep(1)  # Check every second
                   
     except Exception as e:
+        if "ERR_NGROK_108" in str(e):
+            print("Warning: Ngrok session limit reached. This node will not be accessible externally.")
+            print("Please ensure only one ngrok session is running at a time.")
+            return
         if shutdown_event.is_set():
             print("Ngrok interrupted by shutdown signal.")
         else:
             print(f"Ngrok error: {str(e)}")
     finally:
-        print("Cleaning up ngrok...")
+        print("Cleaning up...")
         if listener:
             try:
+                deregister_from_node_handler()
                 ngrok.disconnect()
                 print("Ngrok disconnected successfully")
-                
             except Exception as e:
                 print(f"Error disconnecting ngrok: {str(e)}")
-                
 
 def wait_for_flask(port, max_retries=5):
     """Wait for Flask to start accepting connections"""
@@ -259,15 +545,31 @@ def wait_for_flask(port, max_retries=5):
 
 if __name__ == '__main__':
     try:
+        # Register cleanup handler
+        atexit.register(deregister_from_node_handler)
+        
+        # Set up signal handlers for graceful shutdown
+        import signal
+        def handle_shutdown(signum, frame):
+            print("\nReceived shutdown signal. Cleaning up...")
+            shutdown_event.set()
+            # Give threads time to clean up
+            time.sleep(2)
+            sys.exit(0)
+        
+        signal.signal(signal.SIGINT, handle_shutdown)
+        signal.signal(signal.SIGTERM, handle_shutdown)
+        
         init_thread = Thread(target=initialize_llm, daemon=True)
         ngrok_thread = Thread(target=run_ngrok, daemon=True)
         init_thread.start()
         ngrok_thread.start()
-        app.run(host='0.0.0.0', port=5000, debug=False) # changed to false
+        app.run(host='0.0.0.0', port=5050, debug=False)
     except KeyboardInterrupt:
         print("\nShutting down application...")
     finally:
         shutdown_event.set()
-        # Add any additional cleanup here
+        # Ensure we deregister before exiting
+        deregister_from_node_handler()
         sys.exit(0)
         
