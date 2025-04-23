@@ -59,7 +59,7 @@ class LLMManager:
                 use_mmap=True,
                 f16_kv=True,
                 seed=-1,
-                max_tokens=45,
+                max_tokens=35,
                 temperature=0.5,
                 top_p=0.95,
                 repeat_penalty=1.2,
@@ -170,10 +170,11 @@ class VectorDBManager:
     def __init__(self):
         if VectorDBManager._instance is not None:
             raise Exception("Use get_instance() instead")
-        
-        self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
-        
-
+        if torch.cuda.is_available():
+            print("CUDA is available. Using GPU.")
+            self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
+        else:
+            self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
         embeddings_path = "medical_data_embeddings.pkl"
         all_splits_path = "medical_data_documents.pkl"
 
