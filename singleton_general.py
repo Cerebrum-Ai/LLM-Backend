@@ -49,7 +49,7 @@ class LLMManager:
             print("Loaded multimodal LLM from cache")
         else:    
             self._multimodal_llm = LlamaCpp(
-                model_path=r"/content/LLM-Backend/Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf",
+                model_path=r"Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf",
                 n_gpu_layers=n_gpu_layers,
                 n_batch=n_batch,
                 callback_manager=callback_manager,
@@ -78,7 +78,7 @@ class LLMManager:
             print("Loaded medical LLM from cache")
         else:
             self._medical_llm = LlamaCpp(
-                model_path=r"/content/LLM-Backend/phi-2.Q5_K_M.gguf",
+                model_path=r"phi-2.Q5_K_M.gguf",
                 n_gpu_layers=n_gpu_layers,
                 n_batch=n_batch,
                 callback_manager=callback_manager,
