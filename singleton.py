@@ -170,7 +170,7 @@ class VectorDBManager:
     def __init__(self):
         if VectorDBManager._instance is not None:
             raise Exception("Use get_instance() instead")
-        if torch.is_cuda_available():
+        if torch.cuda.is_available():
             print("CUDA is available")
             self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
         else:
