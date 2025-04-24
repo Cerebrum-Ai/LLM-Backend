@@ -8,7 +8,9 @@ import requests
 import sys
 import atexit
 from waitress import serve # Import waitress
-
+import os # Keep os import
+from dotenv import load_dotenv
+load_dotenv()
 app = Flask(__name__)
 
 # Initialize SQLite database
@@ -274,7 +276,7 @@ def run_ngrok():
             
         # Now that Flask is running, set up ngrok
         print("Setting up ngrok tunnel...")
-        ngrok.set_auth_token("2uHfQak8CxEWThSHdtiVOIC14kq_5px1cRz1ammGDZYnboB2g")
+        ngrok.set_auth_token(os.environ.get("NODE_AUTH_TOKEN"))
         time.sleep(2)
         
         try:
@@ -282,7 +284,7 @@ def run_ngrok():
             print("Starting ngrok tunnel...")
             listener = ngrok.forward(
                 8000,
-                domain="pup-improved-labrador.ngrok-free.app"
+                domain=os.environ.get("NGROK_HANDLER_URL")
             )
             
             # Verify tunnel is working

@@ -6,3 +6,4 @@ langchain-huggingface
 flask
 ngrok
 transformers
+python-dotenv
