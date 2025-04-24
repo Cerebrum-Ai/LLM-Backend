@@ -170,9 +170,12 @@ class VectorDBManager:
     def __init__(self):
         if VectorDBManager._instance is not None:
             raise Exception("Use get_instance() instead")
-        
-        self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
-        
+        if torch.is_cuda_available():
+            print("CUDA is available")
+            self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
+        else:
+            print("CUDA is not available")
+            self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 
         embeddings_path = "medical_data_embeddings.pkl"
         all_splits_path = "medical_data_documents.pkl"
