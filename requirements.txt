@@ -1,8 +1,4 @@
-langchain
-langchain-community
-langchain-chroma
-langgraph
-langchain-huggingface
+waitress
 flask
 ngrok
-transformers
+requests
