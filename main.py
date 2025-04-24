@@ -17,8 +17,7 @@ import base64
 # Add these constants at the top of the file
 NODE_HANDLER_URL = "https://pup-improved-labrador.ngrok-free.app"
 HEARTBEAT_INTERVAL = 30  # seconds
-auth = ["2w7abiUJvdPSfZHUf09rSDALljd_2PKXFabETGCqX85EEWHLp","2w7XfuVqFtykKtN5KFx67pHrcVE_4gY1DWu9W4rmxmyfNE8eQ","2wA6x12MM7NvS1YzQwgtbMONBoK_6YVKt3tuaHqscBCcXXMT1","2wA7AaZTUkxVuZIbMY6la43oXjE_6QFNNfTstPvRXmRbGyBn1"]
-i = 0
+
 # Add this global variable at the top with other constants
 current_ngrok_url = None
 
@@ -482,7 +481,7 @@ def run_ngrok():
     listener = None
     try:
         # Initialize ngrok with your authtoken
-        ngrok.set_auth_token(auth[i])
+        ngrok.set_auth_token("2w7abiUJvdPSfZHUf09rSDALljd_2PKXFabETGCqX85EEWHLp")
         # Wait a moment for cleanup
         time.sleep(2)
         # Start new tunnel
@@ -516,13 +515,7 @@ def run_ngrok():
         if "ERR_NGROK_108" in str(e):
             print("Warning: Ngrok session limit reached. This node will not be accessible externally.")
             print("Please ensure only one ngrok session is running at a time.")
-            if i < len(auth) - 1:
-                i += 1
-                print(f"Retrying with next authtoken (attempt {i + 1}/{len(auth)})...")
-                run_ngrok()
-            else:
-                print("All authtokens exhausted. Exiting...")
-                return
+            return
         if shutdown_event.is_set():
             print("Ngrok interrupted by shutdown signal.")
         else:
