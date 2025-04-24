@@ -18,7 +18,7 @@ import base64
 NODE_HANDLER_URL = "https://pup-improved-labrador.ngrok-free.app"
 HEARTBEAT_INTERVAL = 30  # seconds
 auth = ["2w7abiUJvdPSfZHUf09rSDALljd_2PKXFabETGCqX85EEWHLp","2w7XfuVqFtykKtN5KFx67pHrcVE_4gY1DWu9W4rmxmyfNE8eQ","2wA6x12MM7NvS1YzQwgtbMONBoK_6YVKt3tuaHqscBCcXXMT1","2wA7AaZTUkxVuZIbMY6la43oXjE_6QFNNfTstPvRXmRbGyBn1"]
-i = 0
+
 # Add this global variable at the top with other constants
 current_ngrok_url = None
 
@@ -479,6 +479,7 @@ def handle_deregister():
 def run_ngrok():
     """Synchronous wrapper for async ngrok handler"""
     global current_ngrok_url
+    global i
     listener = None
     try:
         # Initialize ngrok with your authtoken
@@ -551,6 +552,8 @@ def wait_for_flask(port, max_retries=5):
     return False
 
 if __name__ == '__main__':
+    global i 
+    i = 0
     try:
         # Register cleanup handler
         atexit.register(deregister_from_node_handler)
