@@ -171,7 +171,7 @@ class VectorDBManager:
         if VectorDBManager._instance is not None:
             raise Exception("Use get_instance() instead")
         
-        self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cuda'})
+        self._embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
         
 
         embeddings_path = "medical_data_embeddings.pkl"
