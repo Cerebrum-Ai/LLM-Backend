@@ -487,31 +487,9 @@ def handle_chat_request():
         print(f"Response headers: {dict(response.headers)}")
         print(f"Response content length: {len(response.content)} bytes")
         
-        # Filter hop-by-hop headers and create a new Flask response
-        # Define headers that should not be forwarded directly
-        hop_by_hop_headers = {
-            'connection', 'keep-alive', 'proxy-authenticate',
-            'proxy-authorization', 'te', 'trailers', 'transfer-encoding',
-            'upgrade'
-        }
-
-        # Create headers for the new response, excluding hop-by-hop headers
-        # and Content-Encoding/Length as Waitress/Flask will handle these.
-        response_headers = {
-            key: value for key, value in response.headers.items()
-            if key.lower() not in hop_by_hop_headers and key.lower() not in ['content-encoding', 'content-length']
-        }
-
-        # Create a Flask Response object
-        flask_response = app.response_class(
-            response=response.content,
-            status=response.status_code,
-            headers=response_headers,
-            mimetype=response.headers.get('Content-Type') # Explicitly set mimetype if available
-        )
-
-        return flask_response
-
+        # Return the exact response
+        return response.content, response.status_code, response.headers
+        
     except requests.exceptions.Timeout:
         print(f"Request to node {target_node} timed out")
         # Mark the node as inactive
