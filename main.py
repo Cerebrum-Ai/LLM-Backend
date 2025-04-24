@@ -11,13 +11,20 @@ import sys
 import requests
 import threading
 import atexit
-
+from dotenv import load_dotenv
 import base64
-
+import os
+load_dotenv()
 # Add these constants at the top of the file
-NODE_HANDLER_URL = "https://pup-improved-labrador.ngrok-free.app"
+NODE_HANDLER_URL = os.environ.get("NODE_HANDLER_URL")
 HEARTBEAT_INTERVAL = 30  # seconds
-auth = ["2w7abiUJvdPSfZHUf09rSDALljd_2PKXFabETGCqX85EEWHLp","2w7XfuVqFtykKtN5KFx67pHrcVE_4gY1DWu9W4rmxmyfNE8eQ","2wA6x12MM7NvS1YzQwgtbMONBoK_6YVKt3tuaHqscBCcXXMT1","2wA7AaZTUkxVuZIbMY6la43oXjE_6QFNNfTstPvRXmRbGyBn1"]
+auth_tokens_str = os.environ.get("NGROK_AUTH_TOKENS")
+if not auth_tokens_str:
+    print("Error: NGROK_AUTH_TOKENS environment variable not set in .env file or environment.")
+    print("Please create a .env file in the project root and add the variable:")
+    print("NGROK_AUTH_TOKENS=token1,token2,token3,...")
+    sys.exit(1) # Exit if the variable is not set
+auth = auth_tokens_str.split(',')
 
 # Add this global variable at the top with other constants
 current_ngrok_url = None
