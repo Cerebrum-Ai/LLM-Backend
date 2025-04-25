@@ -3,6 +3,7 @@ from langchain_core.globals import set_llm_cache
 import base64
 from singleton import LLMManager
 import requests
+from langchain_core.prompts import PromptTemplate
 
 # Enable in-memory caching for repeated queries
 set_llm_cache(InMemoryCache())
