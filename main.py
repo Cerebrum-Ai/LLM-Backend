@@ -175,17 +175,45 @@ graph = graph_builder.compile()
 @check_initialization
 def chat():
     try:
+        question = None
+        image = None
+        gait = None
+        audio = None
+        typing = None
         # Handle both form data and JSON
         if request.content_type and request.content_type.startswith('multipart/form-data'):
             question = request.form.get('question')
             image = None
-            if 'image' in request.files:
-                image_file = request.files['image']
-                image = image_to_base64_data_uri(image_file)
-        else:
-            data = request.get_json(silent=True)
-            question = data.get('question') if data else None
-            image = None
+            gait = None
+            audio = None
+            typing = None
+            match request.content_type:
+                case ct if ct and ct.startswith('multipart/form-data'):
+                    question = request.form.get('question')
+                    if 'image' in request.files:
+                        image_file = request.files['image']
+                        image = image_to_base64_data_uri(image_file)
+                    if 'gait' in request.files:
+                        gait = request.files['gait']
+                    if 'audio' in request.files:
+                        audio = request.files['audio']
+                    if 'typing' in request.form:
+                        typing = request.form.get('typing')
+                case ct if ct and ct.startswith('application/json'):
+                    data = request.get_json(silent=True)
+                    question = data.get('question') if data else None
+                    if 'image' in data:
+                        image = image_to_base64_data_uri(data['image'])
+                    if 'gait' in data:
+                        gait = data['gait']
+                    if 'audio' in data:
+                        audio = data['audio']
+                    if 'typing' in data:
+                        typing = data['typing']
+                case _:
+                    data = request.get_json(silent=True)
+                    question = data.get('question') if data else None
+
         
         if not question:
             return jsonify({'error': 'Question is required'}), 400
