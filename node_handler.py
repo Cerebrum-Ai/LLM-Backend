@@ -212,6 +212,11 @@ def initialize_app():
         print("\n=== Database Initialization ===")
         print("✓ Database initialized successfully")
 
+        # Clear any existing data from previous runs
+        print("\n=== Clearing Previous Data ===")
+        clear_database()
+        print("✓ Database cleared successfully")
+
         # Print all registered routes for debugging
         print("\n=== Registered Routes ===")
         for rule in app.url_map.iter_rules():
@@ -445,6 +450,9 @@ def mark_node_inactive(node_url):
     finally:
         conn.close()
 
+# Add Response to the import
+from flask import Flask, request, jsonify, Response
+
 @app.route('/api/chat', methods=['POST'])
 @app.route('/chat', methods=['POST'])
 def handle_chat_request():
@@ -452,63 +460,79 @@ def handle_chat_request():
     try:
         # Get the least loaded active node
         target_node = get_least_loaded_node()
-        
+
         if not target_node:
             return jsonify({'error': 'No active nodes available'}), 503
-        
+
         print(f"\n=== Forwarding Chat Request ===")
         print(f"Target node: {target_node}")
         print(f"Request method: {request.method}")
-        print(f"Request headers: {dict(request.headers)}")
+        # Limit header logging for brevity if needed
+        # print(f"Request headers: {dict(request.headers)}")
         print(f"Request content type: {request.content_type}")
-        
-        # Parse the incoming request
-        question = request.form.get('question')
-        image_url = request.form.get('image')
-        
-        if not question:
-            return jsonify({'error': 'Question is required'}), 400
-        
-        print(f"Question: {question}")
-        print(f"Image URL: {image_url}")
-        
-        # Prepare the files dictionary for multipart/form-data
-        files = {
-            'question': (None, question),
-            'image': (None, image_url) if image_url else None
-        }
-        
-        # Forward the request in multipart/form-data format
-        response = requests.post(
-            f"{target_node}/chat",
-            files=files,
-            timeout=90
-        )
-        
-        print(f"Received response from node: {response.status_code}")
-        print(f"Response headers: {dict(response.headers)}")
-        print(f"Response content length: {len(response.content)} bytes")
-        
-        # Return the exact response
-        return response.content, response.status_code, response.headers
-        
+
+        # Check if the request is multipart/form-data or JSON
+        if request.content_type and request.content_type.startswith('multipart/form-data'):
+            # Forward multipart/form-data directly
+            # Prepare headers, excluding Host and Content-Length which requests will set
+            forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length']}
+
+            # Stream the request body to the target node
+            resp = requests.post(
+                f"{target_node}/chat",
+                headers=forward_headers,
+                data=request.get_data(), # Stream the raw data
+                timeout=90,
+                stream=True # Use stream=True for potentially large uploads
+            )
+        elif request.is_json:
+             # Forward JSON data
+            forward_headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length']}
+            forward_headers['Content-Type'] = 'application/json' # Ensure correct content type
+
+            resp = requests.post(
+                f"{target_node}/chat",
+                headers=forward_headers,
+                json=request.get_json(),
+                timeout=90,
+                stream=True
+            )
+        else:
+             # Handle other content types or lack thereof if necessary
+             return jsonify({'error': 'Unsupported content type'}), 415
+
+
+        print(f"Received response from node: {resp.status_code}")
+        # Limit header logging for brevity if needed
+        # print(f"Response headers: {dict(resp.headers)}")
+        # print(f"Response content length: {resp.headers.get('Content-Length', 'N/A')} bytes")
+
+        # Filter hop-by-hop headers before creating the response
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        headers = [(k, v) for k, v in resp.raw.headers.items() if k.lower() not in excluded_headers]
+
+        # Create a Flask Response object, streaming the content
+        response = Response(resp.iter_content(chunk_size=8192), status=resp.status_code, headers=headers)
+        return response
+
     except requests.exceptions.Timeout:
         print(f"Request to node {target_node} timed out")
-        # Mark the node as inactive
-        mark_node_inactive(target_node)
+        if target_node: # Ensure target_node is not None before marking inactive
+            mark_node_inactive(target_node)
         # Try to get another node
         new_node = get_least_loaded_node()
         if new_node and new_node != target_node:
             print(f"Retrying with new node: {new_node}")
-            # Retry the request with the new node
+            # Retry the request with the new node (recursive call)
+            # Be cautious with recursion depth, consider an iterative approach for many retries
             return handle_chat_request()
         return jsonify({
             'error': 'Request to node timed out and no other nodes available'
-        }), 504
+        }), 504 # Gateway Timeout
     except requests.exceptions.ConnectionError as e:
         print(f"Failed to connect to node {target_node}: {str(e)}")
-        # Mark the node as inactive
-        mark_node_inactive(target_node)
+        if target_node: # Ensure target_node is not None
+            mark_node_inactive(target_node)
         # Try to get another node
         new_node = get_least_loaded_node()
         if new_node and new_node != target_node:
@@ -517,15 +541,12 @@ def handle_chat_request():
             return handle_chat_request()
         return jsonify({
             'error': 'Failed to connect to node and no other nodes available'
-        }), 502
+        }), 502 # Bad Gateway
     except Exception as e:
-        print(f"Error forwarding request to {target_node}: {str(e)}")
-        print(f"Error type: {type(e)}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
-        return jsonify({
-            'error': f'Failed to forward request to node: {str(e)}'
-        }), 500
+        # Log the full traceback for better debugging
+        app.logger.exception(f"Error forwarding request to {target_node}: {str(e)}")
+        # print(f"Error forwarding request to {target_node}: {str(e)}") # Original print
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 if __name__ == '__main__':
     try:
