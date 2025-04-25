@@ -12,6 +12,7 @@ import os
 import torch
 import pickle
 import csv
+import time
 
 class ChatSession:
     def __init__(self):
@@ -27,6 +28,25 @@ class LLMManager:
     _session_lock = Lock()
     _multimodal_llm_cache_path = "multimodal_llm.pkl"
     _medical_llm_cache_path = "medical_llm.pkl"
+    _inference_lock = Lock()
+    _is_inferencing = False
+    
+
+    def start_inference(self):
+        """Pause heartbeats during inference"""
+        with self._inference_lock:
+            self._is_inferencing = True
+
+    def end_inference(self):
+        """Resume heartbeats after inference"""
+        with self._inference_lock:
+            self._is_inferencing = False
+
+    @property
+    def is_inferencing(self):
+        """Check if the model is currently inferencing"""
+        with self._inference_lock:
+            return self._is_inferencing
 
     @classmethod
     def get_instance(cls):
@@ -38,10 +58,25 @@ class LLMManager:
         if LLMManager._instance is not None:
             raise Exception("Use get_instance() instead")
         callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
-        n_gpu_layers =  20
+        n_gpu_layers =  25
         n_batch = 512
         n_ctx = 2048
-        
+        llm_params = {
+            'n_gpu_layers': n_gpu_layers,
+            'n_batch': n_batch,
+            'n_ctx': n_ctx,
+            'verbose': False,
+            'use_mlock': True,
+            'use_mmap': True,
+            'f16_kv': True,
+            'seed': -1,
+            'top_k': 40,     # Reduced for faster sampling
+            'n_threads': (os.cpu_count())
+        }
+        model_kwargs = {
+            'tensor_split': None,
+            'rope_scaling': {'type': 'linear', 'factor': 0.5}
+        }
 
         if os.path.exists(self._multimodal_llm_cache_path):
             with open(self._multimodal_llm_cache_path, 'rb') as f:
@@ -50,22 +85,13 @@ class LLMManager:
         else:    
             self._multimodal_llm = LlamaCpp(
                 model_path=r"Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf",
-                n_gpu_layers=n_gpu_layers,
-                n_batch=n_batch,
                 callback_manager=callback_manager,
-                n_ctx=n_ctx,
-                verbose=True,           # Enable half-precision for key/value cache
-                use_mlock=False,
-                use_mmap=True,
-                f16_kv=True,
-                seed=-1,
-                max_tokens=45,
+                max_tokens=35,
                 temperature=0.5,
                 top_p=0.95,
-                repeat_penalty=1.2,
-                top_k=50,
-                n_threads=6,           # Adjust based on your CPU cores          # Use primary GPU
-                tensor_split=None
+                repeat_penalty=1.1,
+                model_kwargs=model_kwargs,
+                **llm_params
                 
             )
             with open(self._multimodal_llm_cache_path, 'wb') as f:
@@ -77,24 +103,17 @@ class LLMManager:
                 self._medical_llm = pickle.load(f)
             print("Loaded medical LLM from cache")
         else:
+            
             self._medical_llm = LlamaCpp(
                 model_path=r"phi-2.Q5_K_M.gguf",
-                n_gpu_layers=n_gpu_layers,
-                n_batch=n_batch,
                 callback_manager=callback_manager,
-                n_ctx=n_ctx,
-                verbose=True,           # Enable half-precision for key/value cache
-                use_mlock=False,
-                use_mmap=True,
-                f16_kv=True,
-                max_tokens=100,
+                max_tokens=75,
                 temperature=0.3,
                 top_p=0.95,
-                repeat_penalty=1.2,
-                top_k=50,
-                seed=-1,
-                n_threads=6,           # Adjust based on your CPU cores                    # Use primary GPU
-                tensor_split=None   # Verbose is required to pass to the callback manager
+                repeat_penalty=1.1,
+                model_kwargs=model_kwargs,
+                **llm_params
+                  
             )
             with open(self._medical_llm_cache_path, 'wb') as f:
                 pickle.dump(self._medical_llm, f)

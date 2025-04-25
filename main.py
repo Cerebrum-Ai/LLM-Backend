@@ -14,6 +14,8 @@ import atexit
 from dotenv import load_dotenv
 import base64
 import os
+import signal
+from waitress import serve
 load_dotenv()
 # Add these constants at the top of the file
 NODE_HANDLER_URL = os.environ.get("NODE_HANDLER_URL")
@@ -77,8 +79,6 @@ def initialize_llm():
         print(f"Error initializing LLM: {str(e)}")
         is_initialized = False    
 
-
-initialize_llm()
 
 def check_initialization(f):
     def wrapper(*args, **kwargs):
@@ -325,6 +325,7 @@ def handle_node_handler_disconnect():
 
 def send_heartbeat():
     """Send periodic heartbeat to node handler"""
+    llm_manager = LLMManager.get_instance()
     global current_ngrok_url
     consecutive_failures = 0
     max_consecutive_failures = 1  # Reduced from 3 to 1 to be more responsive
@@ -332,6 +333,9 @@ def send_heartbeat():
     
     while not shutdown_event.is_set():
         try:
+            if llm_manager.is_inferencing:  # Using the property correctly
+                time.sleep(5)  # Wait briefly before checking again
+                continue
             if reconnection_in_progress:
                 time.sleep(HEARTBEAT_INTERVAL)
                 continue
@@ -539,9 +543,10 @@ def run_ngrok():
         print("Cleaning up...")
         if listener:
             try:
-                deregister_from_node_handler()
+                
                 ngrok.disconnect()
                 print("Ngrok disconnected successfully")
+                deregister_from_node_handler()
             except Exception as e:
                 print(f"Error disconnecting ngrok: {str(e)}")
 
@@ -562,11 +567,9 @@ if __name__ == '__main__':
     global i 
     i = 0
     try:
-        # Register cleanup handler
-        atexit.register(deregister_from_node_handler)
         
         # Set up signal handlers for graceful shutdown
-        import signal
+        
         def handle_shutdown(signum, frame):
             print("\nReceived shutdown signal. Cleaning up...")
             shutdown_event.set()
@@ -579,9 +582,30 @@ if __name__ == '__main__':
         
         init_thread = Thread(target=initialize_llm, daemon=True)
         ngrok_thread = Thread(target=run_ngrok, daemon=True)
+        print("Starting LLM/VectorDB initialization...")
         init_thread.start()
+        init_thread.join()
+        print("Initialization complete.")
+        # Start Flask app in a separate thread
+        flask_port = 5050
+        flask_thread = Thread(target=lambda: serve(app, host='0.0.0.0', port=flask_port, threads=4), daemon=True) 
+        print(f"Starting Flask app on port {flask_port}...")
+        flask_thread.start()
+
+        # Wait for Flask app to be ready before starting ngrok
+        if not wait_for_flask(flask_port):
+             print("Flask app failed to start. Exiting.")
+             sys.exit(1)
+        print("Flask app is running.")
+
+        # Now start ngrok in its thread
+        ngrok_thread = Thread(target=run_ngrok, daemon=True)
+        print("Starting ngrok tunnel...")
         ngrok_thread.start()
-        app.run(host='0.0.0.0', port=5050, debug=False)
+
+        # Keep the main thread alive to handle signals
+        while not shutdown_event.is_set():
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down application...")
     finally:

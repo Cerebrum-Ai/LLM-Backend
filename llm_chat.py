@@ -1,14 +1,17 @@
-from langchain_core.prompts import PromptTemplate
+from langchain_community.cache import InMemoryCache
+from langchain_core.globals import set_llm_cache
 import base64
 from singleton import LLMManager
 import requests
 
-
+# Enable in-memory caching for repeated queries
+set_llm_cache(InMemoryCache())
 
 def init_llm_input(question, image=None):
     """Process input with multimodal LLM"""
     llm_manager = LLMManager.get_instance()
     
+    # Pre-compile templates for better performance
     if image is None:
         template = """Question: {question}
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
@@ -38,13 +41,19 @@ Answer: """
     
     prompt = PromptTemplate.from_template(template)
     llm_chain = prompt | llm_manager.llm
-    
-    return llm_chain.invoke({
-        "question": question,
-        "image": image
-    })
 
-def post_llm_input(initial_diagnosis,question, context):
+    try:
+        llm_manager.start_inference()  # Pause heartbeats during inference
+        return llm_chain.invoke({
+            "question": question,
+            "image": image
+        })
+    finally:
+        llm_manager.end_inference()  # Resume heartbeats
+    
+   
+
+def post_llm_input(initial_diagnosis, question, context):
     """Process follow-up with context"""
     llm_manager = LLMManager.get_instance()
     
@@ -69,8 +78,13 @@ Answer:
     
     prompt = PromptTemplate.from_template(template)
     llm_chain = prompt | llm_manager.medical_llm
-    return llm_chain.invoke({
-        "question": question,
-        "context": context,
-        "initial_diagnosis": initial_diagnosis
-    })
+    
+    try:
+        llm_manager.start_inference()  # Pause heartbeats during inference
+        return llm_chain.invoke({
+            "question": question,
+            "context": context,
+            "initial_diagnosis": initial_diagnosis
+        })
+    finally:
+        llm_manager.end_inference()  # Resume heartbeats
