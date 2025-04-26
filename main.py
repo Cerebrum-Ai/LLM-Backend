@@ -332,7 +332,7 @@ def register_with_node_handler():
         print(f"Attempting to register with node handler at {NODE_HANDLER_URL}...")
         response = requests.post(
             f"{NODE_HANDLER_URL}/register", 
-            json={"url": current_ngrok_url},
+            json={"url": current_ngrok_url, "type": "llm"},
             timeout=5
         )
         if response.status_code == 200:
@@ -371,82 +371,6 @@ def handle_node_handler_disconnect():
     
     print("Failed to reconnect after multiple attempts")
     return False
-
-def send_heartbeat():
-    """Send periodic heartbeat to node handler"""
-    llm_manager = LLMManager.get_instance()
-    global current_ngrok_url
-    consecutive_failures = 0
-    max_consecutive_failures = 1  # Reduced from 3 to 1 to be more responsive
-    reconnection_in_progress = False
-    
-    while not shutdown_event.is_set():
-        try:
-            if llm_manager.is_inferencing:  # Using the property correctly
-                time.sleep(5)  # Wait briefly before checking again
-                continue
-            if reconnection_in_progress:
-                time.sleep(HEARTBEAT_INTERVAL)
-                continue
-                
-            print("\nSending heartbeat to node handler...")
-            response = requests.post(
-                f"{NODE_HANDLER_URL}/heartbeat",
-                json={"url": current_ngrok_url},
-                timeout=5
-            )
-            if response.status_code == 200:
-                consecutive_failures = 0  # Reset on success
-                reconnection_in_progress = False
-                print("✓ Heartbeat successful")
-            else:
-                print(f"✗ Heartbeat failed with status code: {response.status_code}")
-                if response.text:
-                    print(f"Response: {response.text[:200]}...")  # Show first 200 chars of response
-                consecutive_failures += 1
-                if consecutive_failures >= max_consecutive_failures:
-                    print("\n=== Node Handler Connection Lost ===")
-                    print("Multiple heartbeat failures detected. Starting reconnection process...")
-                    reconnection_in_progress = True
-                    if handle_node_handler_disconnect():
-                        consecutive_failures = 0
-                        reconnection_in_progress = False
-                        print("✓ Successfully reconnected to node handler")
-        except requests.exceptions.Timeout:
-            print("✗ Heartbeat timed out")
-            consecutive_failures += 1
-            if consecutive_failures >= max_consecutive_failures:
-                print("\n=== Node Handler Connection Lost ===")
-                print("Multiple heartbeat timeouts detected. Starting reconnection process...")
-                reconnection_in_progress = True
-                if handle_node_handler_disconnect():
-                    consecutive_failures = 0
-                    reconnection_in_progress = False
-                    print("✓ Successfully reconnected to node handler")
-        except requests.exceptions.ConnectionError:
-            print("✗ Could not connect to node handler")
-            consecutive_failures += 1
-            if consecutive_failures >= max_consecutive_failures:
-                print("\n=== Node Handler Connection Lost ===")
-                print("Connection error detected. Starting reconnection process...")
-                reconnection_in_progress = True
-                if handle_node_handler_disconnect():
-                    consecutive_failures = 0
-                    reconnection_in_progress = False
-                    print("✓ Successfully reconnected to node handler")
-        except Exception as e:
-            print(f"✗ Error sending heartbeat: {str(e)}")
-            consecutive_failures += 1
-            if consecutive_failures >= max_consecutive_failures:
-                print("\n=== Node Handler Connection Lost ===")
-                print("Error detected. Starting reconnection process...")
-                reconnection_in_progress = True
-                if handle_node_handler_disconnect():
-                    consecutive_failures = 0
-                    reconnection_in_progress = False
-                    print("✓ Successfully reconnected to node handler")
-        
-        time.sleep(HEARTBEAT_INTERVAL)
 
 def deregister_from_node_handler():
     """Deregister this node from the node handler"""
@@ -536,6 +460,45 @@ def handle_deregister():
         print(f"Error handling deregister request: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+def send_heartbeat():
+    """Send periodic heartbeat to node handler"""
+    llm_manager = LLMManager.get_instance()
+    global current_ngrok_url
+    consecutive_failures = 0
+    max_consecutive_failures = 1  # Reduced from 3 to 1 to be more responsive
+    reconnection_in_progress = False
+    
+    while not shutdown_event.is_set():
+        try:
+            if llm_manager.is_inferencing:  # Using the property correctly
+                time.sleep(5)  # Wait briefly before checking again
+                continue
+            if reconnection_in_progress:
+                time.sleep(HEARTBEAT_INTERVAL)
+                continue
+                
+            print("\nSending heartbeat to node handler...")
+            response = requests.post(
+                f"{NODE_HANDLER_URL}/heartbeat",
+                json={"url": current_ngrok_url},
+                timeout=5
+            )
+            if response.status_code != 200:
+                print(f"Heartbeat not acknowledged: {response.text}")
+            consecutive_failures = 0
+        except Exception as e:
+            print(f"Heartbeat error: {str(e)}")
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print("\n=== Node Handler Connection Lost ===")
+                print("Error detected. Starting reconnection process...")
+                reconnection_in_progress = True
+                if handle_node_handler_disconnect():
+                    consecutive_failures = 0
+                    reconnection_in_progress = False
+                    print("✓ Successfully reconnected to node handler")
+        time.sleep(HEARTBEAT_INTERVAL)
+        
 def run_ngrok():
     """Synchronous wrapper for async ngrok handler"""
     global current_ngrok_url
@@ -662,4 +625,3 @@ if __name__ == '__main__':
         # Ensure we deregister before exiting
         deregister_from_node_handler()
         sys.exit(0)
-        
