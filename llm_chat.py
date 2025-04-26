@@ -8,13 +8,13 @@ from langchain_core.prompts import PromptTemplate
 # Enable in-memory caching for repeated queries
 set_llm_cache(InMemoryCache())
 
-def init_llm_input(question, image=None):
+def init_llm_input(question, image=None,not_none_keys=None):
     """Process input with multimodal LLM"""
     llm_manager = LLMManager.get_instance()
     
     # Pre-compile templates for better performance
     if image is None:
-        template = """Question: {question}
+        template = """Question: {question}, Additional  attached data: {not_none_keys}
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
 1. Identify potential diseases based on the question.
@@ -27,7 +27,7 @@ Instructions:
 
 Answer: """
     else:
-        template = """Question: {question} and image data: {image}
+        template = """Question: {question},image data: {image} Additional  attached data: {not_none_keys}
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
 1. Identify potential diseases based on the question and image data.
@@ -47,18 +47,20 @@ Answer: """
         llm_manager.start_inference()  # Pause heartbeats during inference
         return llm_chain.invoke({
             "question": question,
-            "image": image
+            "image": image,
+            "not_none_keys": not_none_keys
         })
     finally:
         llm_manager.end_inference()  # Resume heartbeats
     
    
 
-def post_llm_input(initial_diagnosis, question, context):
+def post_llm_input(initial_diagnosis, question, context,not_none_keys_data=None):
     """Process follow-up with context"""
     llm_manager = LLMManager.get_instance()
     
     template = """Question: {question}
+Additional attached data: {not_none_keys_data}
 Context: {context}
 Initial Diagnosis: {initial_diagnosis}
 Instructions: Provide a concise medical analysis following this exact format:
@@ -85,7 +87,8 @@ Answer:
         return llm_chain.invoke({
             "question": question,
             "context": context,
-            "initial_diagnosis": initial_diagnosis
+            "initial_diagnosis": initial_diagnosis,
+            "not_none_keys_data": not_none_keys_data
         })
     finally:
         llm_manager.end_inference()  # Resume heartbeats
