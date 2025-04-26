@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import ngrok
 import sqlite3
 import threading
@@ -15,18 +15,18 @@ app = Flask(__name__)
 
 # Initialize SQLite database
 def init_db():
-    """Initialize database with reconnection logic"""
+    """Initialize database with reconnection logic and node type column"""
     max_retries = 3
     retry_delay = 1  # seconds
-    
     for attempt in range(max_retries):
         try:
-            conn = sqlite3.connect('nodes.db', timeout=20)  # Add timeout
+            conn = sqlite3.connect('nodes.db', timeout=20)
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS nodes
-                         (url TEXT PRIMARY KEY, 
-                          status TEXT, 
-                          last_heartbeat TIMESTAMP)''')
+                         (url TEXT PRIMARY KEY,
+                          status TEXT,
+                          last_heartbeat TIMESTAMP,
+                          type TEXT)''')
             conn.commit()
             conn.close()
             print("Database initialized successfully")
@@ -35,7 +35,7 @@ def init_db():
             print(f"Database initialization attempt {attempt + 1} failed: {str(e)}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
+                retry_delay *= 2
             else:
                 raise
 
@@ -87,10 +87,16 @@ def status():
         try:
             c.execute('SELECT COUNT(*) FROM nodes WHERE status = "active"')
             active_nodes = c.fetchone()[0]
+            c.execute('SELECT COUNT(*) FROM nodes WHERE status = "active" AND type = "llm"')
+            llm_nodes = c.fetchone()[0]
+            c.execute('SELECT COUNT(*) FROM nodes WHERE status = "active" AND type = "ml"')
+            ml_nodes = c.fetchone()[0]
             return jsonify({
                 'status': 'ok',
                 'message': 'Node handler is running',
-                'active_nodes': active_nodes
+                'active_nodes': active_nodes,
+                'llm_nodes': llm_nodes,
+                'ml_nodes': ml_nodes
             })
         finally:
             conn.close()
@@ -106,27 +112,24 @@ def register_node():
     """Register a new node with the node handler"""
     try:
         data = request.json
-        if not data or 'url' not in data:
-            return jsonify({'error': 'URL is required'}), 400
-            
+        if not data or 'url' not in data or 'type' not in data:
+            return jsonify({'error': 'URL and type are required'}), 400
         node_url = data['url']
+        node_type = data['type']
+        if node_type not in ['llm', 'ml']:
+            return jsonify({'error': 'Invalid node type'}), 400
         print(f"\n=== New Node Registration ===")
-        print(f"Registering node: {node_url}")
-        
+        print(f"Registering node: {node_url}, type: {node_type}")
         conn = get_db()
         try:
             c = conn.cursor()
-            # Check if node already exists
             c.execute('SELECT url FROM nodes WHERE url = ?', (node_url,))
             existing_node = c.fetchone()
-            
             if existing_node:
-                print(f"Node {node_url} already registered. Updating status...")
-                c.execute('UPDATE nodes SET status = "active", last_heartbeat = CURRENT_TIMESTAMP WHERE url = ?', (node_url,))
+                print(f"Node {node_url} already registered. Updating status and type...")
+                c.execute('UPDATE nodes SET status = "active", last_heartbeat = CURRENT_TIMESTAMP, type = ? WHERE url = ?', (node_type, node_url))
             else:
-                print(f"Registering new node: {node_url}")
-                c.execute('INSERT INTO nodes (url, status, last_heartbeat) VALUES (?, "active", CURRENT_TIMESTAMP)', (node_url,))
-            
+                c.execute('INSERT INTO nodes (url, status, last_heartbeat, type) VALUES (?, "active", CURRENT_TIMESTAMP, ?)', (node_url, node_type))
             conn.commit()
             print(f"✓ Node {node_url} registered successfully")
             return jsonify({'status': 'success', 'message': 'Node registered successfully'})
@@ -146,11 +149,9 @@ def deregister_node():
         data = request.json
         if not data or 'url' not in data:
             return jsonify({'error': 'URL is required'}), 400
-            
         node_url = data['url']
         print(f"\n=== Node Deregistration ===")
         print(f"Deregistering node: {node_url}")
-        
         conn = get_db()
         try:
             c = conn.cursor()
@@ -174,11 +175,9 @@ def update_heartbeat():
         data = request.json
         if not data or 'url' not in data:
             return jsonify({'error': 'URL is required'}), 400
-            
         node_url = data['url']
         print(f"\n=== Heartbeat Update ===")
         print(f"Updating heartbeat for node: {node_url}")
-        
         conn = get_db()
         try:
             c = conn.cursor()
@@ -547,6 +546,33 @@ def handle_chat_request():
         app.logger.exception(f"Error forwarding request to {target_node}: {str(e)}")
         # print(f"Error forwarding request to {target_node}: {str(e)}") # Original print
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+@app.route('/ml/forward', methods=['POST'])
+def forward_ml_request():
+    """
+    Forwards ML data processing requests to the models node.
+    Expects JSON with: url, data_type, model.
+    """
+    data = request.get_json()
+    url = data.get('url')
+    data_type = data.get('data_type')
+    model = data.get('model')
+
+    if not url or not data_type or not model:
+        return jsonify({'error': 'Missing required fields (url, data_type, model)'}), 400
+    if data_type not in ['image', 'gait', 'audio', 'typing']:
+        return jsonify({'error': 'Invalid data_type'}), 400
+
+    # Forward request to models node (assume running on localhost:9000 for now)
+    try:
+        response = requests.post('http://localhost:9000/ml/process', json={
+            'url': url,
+            'data_type': data_type,
+            'model': model
+        }, timeout=10)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': f'Failed to reach models node: {str(e)}'}), 502
 
 if __name__ == '__main__':
     try:
