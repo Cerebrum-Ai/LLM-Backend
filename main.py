@@ -93,6 +93,7 @@ def check_initialization(f):
 class State(TypedDict):
     question: str
     context: List[Document]
+    data: dict
     answer: str
     image: str
     initial_diagnosis: str
@@ -104,8 +105,9 @@ def init(state: State):
     try:
         session_id = llm_instance.create_session()
         state["session_id"] = session_id
-        
-        initial_response = init_llm_input(state["question"], state.get("image"))
+        data = state.get("data", {})
+        not_none_keys = [k for k, v in data.items() if v not in (None, "", [])]
+        initial_response = init_llm_input(state["question"], state.get("image"),not_none_keys)
         state["initial_diagnosis"] = initial_response
         state["answer"] = initial_response
         analysis = {
@@ -161,6 +163,21 @@ def generate(state: State):
         return {"answer": str(e)}
 
 
+def start_router(state: State):
+    """Route to the correct start node based on presence of typing, gait, or audio."""
+    data = state.get("data", {})
+    match data:
+        case {"typing": t, **rest} if t not in (None, "", []):
+            return "typing_mid"
+        case {"gait": g, **rest} if g not in (None, "", []):
+            return "gait_mid"
+        case {"audio": a, **rest} if a not in (None, "", []):
+            return "audio_mid"
+        case _:
+            return "norm_mid"
+
+
+
 # Initialize the graph
 graph_builder = StateGraph(State)
 graph_builder.add_node(init)
@@ -170,6 +187,8 @@ graph_builder.add_edge(START, "init")
 graph_builder.add_edge("init", "retrieve")
 graph_builder.add_edge("retrieve", "generate")
 graph = graph_builder.compile()
+
+
 @app.route('/api/chat', methods=['POST'])
 @app.route('/chat', methods=['POST'])
 @check_initialization
@@ -219,8 +238,10 @@ def chat():
             return jsonify({'error': 'Question is required'}), 400
 
         initial_state = {
-             "question": question,
+            "question": question,
             "image": image,
+            "data" : {
+                "gait": gait,audio: audio, typing: typing},
             "context": [],
             "answer": "",
             "initial_diagnosis": "",
