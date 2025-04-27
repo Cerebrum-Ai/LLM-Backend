@@ -35,6 +35,9 @@ GPTQ/
 # Model files
 *.gguf
 *.bin
+*.pkl
+*.pickle 
+*.h5
 
 # Database
 chroma_langchain_db/
