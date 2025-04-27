@@ -43,7 +43,16 @@ Answer: """
         template = """Question: {question}, Additional attached data: {not_none_keys}
 Audio analysis: {audio_context}
 
-
+ATTENTION: THIS IS A LIST-ONLY RESPONSE.
+Instructions:
+1. Identify potential diseases based on the question and emotional state detected in audio.
+2. List ONLY disease names (maximum 5).
+3. Provide the disease names as a comma-separated list.
+4. Do not include any introductory text, explanations, or additional information.
+5. Do not include the question, instructions, or attention text in the answer.
+6. Limit the response to 10 words or less.
+7. All questions are purely medical and require only the disease names.
+8. Consider that emotional states like 'sad' may indicate depression, while 'fear' might suggest anxiety disorders.
 
 Answer: """
     else:
@@ -145,3 +154,4 @@ Answer:
     finally:
         llm_manager.end_inference()  # Resume heartbeats
 
+        
