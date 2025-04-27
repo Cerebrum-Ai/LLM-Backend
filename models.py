@@ -8,6 +8,14 @@ import signal
 import requests
 from dotenv import load_dotenv
 from waitress import serve
+import tempfile
+import base64
+import subprocess
+
+# Import ML models - audio processing is just one of potentially many ML types
+sys.path.append(os.path.join(os.path.dirname(__file__), 'models/audio/emotion'))
+from audio_processor import SimpleAudioAnalyzer
+
 load_dotenv()
 
 NODE_HANDLER_URL = os.environ.get("NODE_HANDLER_URL")
@@ -21,7 +29,109 @@ current_ngrok_url = None
 shutdown_event = threading.Event()
 i = 0
 
+# Flask application for ML model service
 app = Flask(__name__)
+
+# Centralized registry for all ML models available in this service
+class MLModels:
+    # Dictionary to hold initialized model instances
+    _instances = {}
+    
+    # Model registry - maps model type and name to initialization function
+    _registry = {
+        'audio': {
+            'emotion': lambda: SimpleAudioAnalyzer.get_instance()
+        }
+        # Add more model types and names here as they become available:
+        # 'image': {
+        #    'classification': lambda: ImageClassifier.get_instance()
+        # },
+        # 'text': {
+        #    'sentiment': lambda: SentimentAnalyzer.get_instance()
+        # }
+    }
+    
+    @classmethod
+    def initialize_all(cls):
+        """Initialize all registered ML models"""
+        print("Initializing all ML models...")
+        
+        # Check if FFmpeg is installed (needed for audio models)
+        check_ffmpeg_installed()
+        
+        successful_inits = 0
+        total_models = 0
+        
+        # Iterate through all registered model types and models
+        for model_type, models in cls._registry.items():
+            print(f"Initializing {model_type} models...")
+            for model_name, init_func in models.items():
+                total_models += 1
+                try:
+                    print(f"  - Initializing {model_type}/{model_name} model...")
+                    model_instance = init_func()
+                    cls._instances[f"{model_type}/{model_name}"] = model_instance
+                    print(f"  {model_type}/{model_name} model initialized successfully")
+                    successful_inits += 1
+                except Exception as e:
+                    print(f"  Error initializing {model_type}/{model_name} model: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+        
+        print(f"ML model initialization complete: {successful_inits}/{total_models} models initialized")
+        return successful_inits > 0  # Return True if at least one model was initialized
+    
+    @classmethod
+    def get_model(cls, model_type, model_name):
+        """Get an initialized model by type and name"""
+        model_key = f"{model_type}/{model_name}"
+        return cls._instances.get(model_key)
+    
+    @classmethod
+    def process(cls, data_type, model, data):
+        """Process data with the specified model type"""
+        model_instance = cls.get_model(data_type, model)
+        if not model_instance:
+            return {"error": f"Model {data_type}/{model} not found or not initialized"}
+        
+        # Route to appropriate processing function based on model type
+        if data_type == 'audio':
+            if model == 'emotion':
+                return cls._process_audio_emotion(model_instance, data)
+        
+        # Add more model type processors as they become available
+        
+        return {"error": f"Processing for {data_type}/{model} not implemented"}
+    
+    @classmethod
+    def _process_audio_emotion(cls, model_instance, audio_data):
+        """Process audio data with emotion detection model"""
+        try:
+            return model_instance.analyze_audio(audio_data)
+        except Exception as e:
+            print(f"Error processing audio: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e), "detected_emotion": "unknown"}
+
+def initialize_models():
+    """Initialize all ML models"""
+    return MLModels.initialize_all()
+
+def check_ffmpeg_installed():
+    """Check if ffmpeg is installed and accessible"""
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode == 0:
+            print("FFmpeg is installed and accessible")
+            return True
+        else:
+            print("Warning: FFmpeg test command returned non-zero exit code")
+            return False
+    except Exception as e:
+        print(f"Warning: FFmpeg is not installed or not in PATH: {str(e)}")
+        print("Audio conversion functionality may not work properly")
+        return False
 
 # --- Node Registration, Heartbeat, Deregistration ---
 def wait_for_node_handler(max_retries=10):
@@ -142,6 +252,15 @@ signal.signal(signal.SIGINT, handle_shutdown)
 signal.signal(signal.SIGTERM, handle_shutdown)
 
 # --- Flask Endpoints (existing ML endpoint remains) ---
+@app.route('/')
+def root():
+    """Root endpoint for health checks"""
+    return jsonify({
+        'status': 'ok',
+        'service': 'ml_models',
+        'message': 'ML models service is running'
+    })
+
 @app.route('/ml/process', methods=['POST'])
 def process_ml_data():
     """
@@ -161,16 +280,58 @@ def process_ml_data():
     if data_type not in ['image', 'gait', 'audio', 'typing']:
         return jsonify({'error': 'Invalid data_type'}), 400
 
-    # (ML processing would go here)
-    print(f"Received ML request: url={url}, type={data_type}, model={model}")
+    # Process based on data type
+    result = {}
+    
+    try:
+        # Check if this is a file URL or a data URL
+        if data_type == 'audio':
+            print(f"Processing audio data with model: {model}")
+            
+            try:
+                # Fetch the audio data from the URL
+                try:
+                    audio_data = requests.get(url).content
+                    
+                    # Save to a temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                        temp_path = temp_file.name
+                        temp_file.write(audio_data)
+                    
+                    try:
+                        # Process with the appropriate model
+                        print(f"Analyzing audio from {temp_path}")
+                        result = MLModels.process('audio', model, temp_path)
+                    finally:
+                        # Clean up
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                            
+                except requests.RequestException as e:
+                    print(f"Error fetching audio from URL: {str(e)}")
+                    result = {"error": f"Could not fetch audio from URL: {str(e)}", "detected_emotion": "unknown"}
+            except Exception as e:
+                print(f"Error processing audio: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                result = {"error": str(e), "detected_emotion": "unknown"}
+        else:
+            # Other data type handling will be added here as models are implemented
+            print(f"Received ML request for unimplemented data type: {data_type}/{model}")
+            result = {
+                'status': 'error',
+                'message': f'Processing for {data_type}/{model} not implemented yet',
+                'url': url,
+                'data_type': data_type,
+                'model': model
+            }
+    except Exception as e:
+        print(f"Unexpected error in ML processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        result = {"error": str(e)}
 
-    # Respond with acknowledgement
-    return jsonify({
-        'status': 'received',
-        'url': url,
-        'data_type': data_type,
-        'model': model
-    }), 200
+    return jsonify(result), 200
 
 @app.route('/deregister', methods=['POST'])
 def handle_deregister():
@@ -193,14 +354,14 @@ def handle_deregister():
                         print(f"\nReconnection attempt {attempt + 1}/{max_retries}")
                         print(f"Trying to connect to node handler at {NODE_HANDLER_URL}...")
                         if register_with_node_handler():
-                            print("✓ Successfully reconnected to node handler")
+                            print("Successfully reconnected to node handler")
                             return
-                        print(f"✗ Reconnection attempt {attempt + 1} failed")
+                        print(f"Reconnection attempt {attempt + 1} failed")
                         print(f"Waiting {retry_delay} seconds before next attempt...")
                         time.sleep(retry_delay)
                         retry_delay = min(retry_delay * 2, 30)
                     except Exception as e:
-                        print(f"✗ Error in background reconnection: {str(e)}")
+                        print(f"Error in background reconnection: {str(e)}")
                         print(f"Waiting {retry_delay} seconds before next attempt...")
                         time.sleep(retry_delay)
                 print("Failed to reconnect after multiple attempts")
@@ -217,6 +378,11 @@ def handle_deregister():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    # Initialize all ML models centrally
+    if not initialize_models():
+        print("Failed to initialize any ML models. Exiting.")
+        sys.exit(1)
+    
     flask_thread = threading.Thread(target=lambda: serve(app, host='0.0.0.0', port=9000, threads=4), daemon=True)
     flask_thread.start()
     # Wait for Flask to be ready

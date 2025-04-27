@@ -109,70 +109,88 @@ def status():
 
 @app.route('/register', methods=['POST'])
 def register_node():
-    """Register a new node with the node handler"""
+    """Register a node with the node handler"""
     try:
-        data = request.json
-        if not data or 'url' not in data or 'type' not in data:
-            return jsonify({'error': 'URL and type are required'}), 400
-        node_url = data['url']
-        node_type = data['type']
-        if node_type not in ['llm', 'ml']:
-            return jsonify({'error': 'Invalid node type'}), 400
+        data = request.get_json()
+        if not data or 'url' not in data:
+            return jsonify({'error': 'Invalid registration data'}), 400
+
+        url = data['url']
+        node_type = data.get('type', 'ml')  # Default to 'ml' for backward compatibility
+        
+        # Skip the reachability check as it's causing issues with ngrok URLs
+        # Instead, just log the registration attempt
         print(f"\n=== New Node Registration ===")
-        print(f"Registering node: {node_url}, type: {node_type}")
+        print(f"Registering {node_type} node: {url}")
+
+        # Add to database
         conn = get_db()
-        try:
-            c = conn.cursor()
-            c.execute('SELECT url FROM nodes WHERE url = ?', (node_url,))
-            existing_node = c.fetchone()
-            if existing_node:
-                print(f"Node {node_url} already registered. Updating status and type...")
-                c.execute('UPDATE nodes SET status = "active", last_heartbeat = CURRENT_TIMESTAMP, type = ? WHERE url = ?', (node_type, node_url))
+        c = conn.cursor()
+        
+        c.execute('SELECT * FROM nodes WHERE url = ?', (url,))
+        existing = c.fetchone()
+        
+        if existing:
+            c.execute('UPDATE nodes SET status = "active", last_heartbeat = CURRENT_TIMESTAMP, type = ? WHERE url = ?', 
+                     (node_type, url))
+            print(f"Updated existing node: {url}")
+        else:
+            c.execute('INSERT INTO nodes (url, status, last_heartbeat, type) VALUES (?, ?, CURRENT_TIMESTAMP, ?)', 
+                     (url, "active", node_type))
+            print(f"Added new node: {url}")
+        
+        conn.commit()
+        conn.close()
+        
+        # If it's a chatbot node, also track it in the chatbot list
+        with chatbot_nodes_lock:
+            if node_type == 'chatbot':
+                if url not in chatbot_nodes:
+                    chatbot_nodes.append(url)
+                print(f"Registered chatbot node: {url}")
             else:
-                c.execute('INSERT INTO nodes (url, status, last_heartbeat, type) VALUES (?, "active", CURRENT_TIMESTAMP, ?)', (node_url, node_type))
-            conn.commit()
-            print(f"✓ Node {node_url} registered successfully")
-            return jsonify({'status': 'success', 'message': 'Node registered successfully'})
-        except Exception as e:
-            print(f"✗ Error registering node: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-        finally:
-            conn.close()
+                print(f"Registered ML node: {url}")
+            
+        return jsonify({'status': 'ok', 'message': f'{node_type} node registered successfully'})
     except Exception as e:
-        print(f"✗ Error in register_node: {str(e)}")
+        print(f"Error in register_node: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/deregister', methods=['POST'])
 def deregister_node():
     """Deregister a node from the node handler"""
     try:
-        data = request.json
+        data = request.get_json()
         if not data or 'url' not in data:
-            return jsonify({'error': 'URL is required'}), 400
-        node_url = data['url']
-        print(f"\n=== Node Deregistration ===")
-        print(f"Deregistering node: {node_url}")
+            return jsonify({'error': 'Invalid deregistration data'}), 400
+
+        url = data['url']
+        
+        # Remove from database
         conn = get_db()
-        try:
-            c = conn.cursor()
-            c.execute('DELETE FROM nodes WHERE url = ?', (node_url,))
-            conn.commit()
-            print(f"✓ Node {node_url} deregistered successfully")
-            return jsonify({'status': 'success', 'message': 'Node deregistered successfully'})
-        except Exception as e:
-            print(f"✗ Error deregistering node: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-        finally:
-            conn.close()
+        c = conn.cursor()
+        c.execute('DELETE FROM nodes WHERE url = ?', (url,))
+        conn.commit()
+        conn.close()
+        
+        # Also remove from chatbot list if it's there
+        with chatbot_nodes_lock:
+            if url in chatbot_nodes:
+                chatbot_nodes.remove(url)
+                print(f"Deregistered chatbot node: {url}")
+            else:
+                print(f"Deregistered ML node: {url}")
+        
+        return jsonify({'status': 'ok', 'message': 'Node deregistered successfully'})
     except Exception as e:
-        print(f"✗ Error in deregister_node: {str(e)}")
+        print(f"Error in deregister_node: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/heartbeat', methods=['POST'])
 def update_heartbeat():
     """Update the heartbeat timestamp for a node"""
     try:
-        data = request.json
+        data = request.get_json()
         if not data or 'url' not in data:
             return jsonify({'error': 'URL is required'}), 400
         node_url = data['url']
@@ -452,6 +470,14 @@ def mark_node_inactive(node_url):
 # Add Response to the import
 from flask import Flask, request, jsonify, Response
 
+# Initialize ML node tracking
+ml_nodes_in_use = {}
+ml_node_lock = threading.Lock()
+
+# Add chatbot tracking at module level
+chatbot_nodes = []
+chatbot_nodes_lock = threading.Lock()
+
 @app.route('/api/chat', methods=['POST'])
 @app.route('/chat', methods=['POST'])
 def handle_chat_request():
@@ -563,16 +589,211 @@ def forward_ml_request():
     if data_type not in ['image', 'gait', 'audio', 'typing']:
         return jsonify({'error': 'Invalid data_type'}), 400
 
-    # Forward request to models node (assume running on localhost:9000 for now)
+    # Get an active ML node from the database
     try:
-        response = requests.post('http://localhost:9000/ml/process', json={
-            'url': url,
-            'data_type': data_type,
-            'model': model
-        }, timeout=10)
-        return jsonify(response.json()), response.status_code
+        conn = get_db()
+        c = conn.cursor()
+        try:
+            # Get the most recently active ML node
+            c.execute('SELECT url FROM nodes WHERE type = "ml" AND status = "active" ORDER BY last_heartbeat DESC LIMIT 1')
+            result = c.fetchone()
+            if not result:
+                return jsonify({'error': 'No active ML nodes available'}), 503
+            
+            ml_node_url = result[0]
+            print(f"Using ML node at: {ml_node_url}")
+            
+            # Forward request to the ML node's process endpoint
+            response = requests.post(f"{ml_node_url}/ml/process", json={
+                'url': url,
+                'data_type': data_type,
+                'model': model
+            }, timeout=10)
+            return jsonify(response.json()), response.status_code
+        finally:
+            conn.close()
     except requests.exceptions.RequestException as e:
         return jsonify({'error': f'Failed to reach models node: {str(e)}'}), 502
+    except Exception as e:
+        app.logger.exception(f"Error in ML forward request: {str(e)}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+def get_active_chatbot_node():
+    """Get an active chatbot node"""
+    with chatbot_nodes_lock:
+        if not chatbot_nodes:
+            return None
+        # For now just return the first one
+        # In the future, you could implement load balancing for multiple chatbots
+        return chatbot_nodes[0]
+
+def get_active_llm_node():
+    """Get an active LLM node (main.py instance)"""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # First try to find nodes with type = 'llm'
+        c.execute('''
+            SELECT url FROM nodes 
+            WHERE status = "active" 
+            AND type = "llm"
+            ORDER BY last_heartbeat DESC
+        ''')
+        node = c.fetchone()
+        
+        # If no nodes with explicit type, try to find by port (5050 is the default for main.py)
+        if not node:
+            c.execute('''
+                SELECT url FROM nodes 
+                WHERE status = "active" 
+                AND url LIKE "%5050%" 
+                ORDER BY last_heartbeat DESC
+            ''')
+            node = c.fetchone()
+            
+        # If still no nodes, return None
+        if not node:
+            print("No active LLM nodes found")
+            return None
+            
+        print(f"Found active LLM node: {node[0]}")
+        return node[0]
+    except Exception as e:
+        print(f"Error getting active LLM node: {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+def get_available_ml_node():
+    """Get an available ML node that's not currently in use"""
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Get all active ML nodes
+        c.execute('''
+            SELECT url FROM nodes 
+            WHERE status = "active" 
+            AND (type = "ml" OR url LIKE "%9000%")
+            ORDER BY last_heartbeat DESC
+        ''')
+        nodes = c.fetchall()
+        
+        if not nodes:
+            return None
+            
+        # Find one that's not in use
+        with ml_node_lock:
+            for row in nodes:
+                node_url = row[0]
+                if node_url not in ml_nodes_in_use:
+                    # Mark this node as in use
+                    ml_nodes_in_use[node_url] = time.time()
+                    # Schedule cleanup after 30 seconds
+                    cleanup_thread = threading.Thread(
+                        target=lambda url=node_url: (time.sleep(30), ml_nodes_in_use.pop(url, None)),
+                        daemon=True
+                    )
+                    cleanup_thread.start()
+                    return node_url
+                    
+            # If all nodes are in use, return the least recently used one
+            if nodes:
+                return nodes[0][0]
+            return None
+    except Exception as e:
+        print(f"Error getting available ML node: {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+@app.route('/api/external/chat', methods=['POST'])
+def handle_external_chat():
+    """Handle external chat requests by forwarding them to chatbot"""
+    try:
+        # Get an active chatbot node
+        chatbot_node = get_active_chatbot_node()
+        if not chatbot_node:
+            return jsonify({'error': 'No active chatbot available'}), 503
+            
+        # Get an active ML node
+        ml_node = get_available_ml_node()
+        if not ml_node:
+            ml_node = "No active ML node available"
+            
+        # Get an active LLM node    
+        llm_node = get_active_llm_node()
+        if not llm_node:
+            llm_node = "No active LLM node available"
+            
+        print(f"\n=== Forwarding External Chat Request ===")
+        print(f"Chatbot Node: {chatbot_node}")
+        print(f"ML Node: {ml_node}")
+        print(f"LLM Node: {llm_node}")
+        
+        # Add ML and LLM URLs to headers for the chatbot
+        headers = {
+            'X-ML-Node-URL': ml_node if ml_node else '',
+            'X-LLM-Node-URL': llm_node if llm_node else ''
+        }
+        
+        # Forward the request content and headers
+        if request.content_type and request.content_type.startswith('multipart/form-data'):
+            # For multipart form data, we need to forward files
+            files = {}
+            data = {}
+            
+            # Process form fields
+            for key, value in request.form.items():
+                data[key] = value
+                
+            # Process file uploads
+            for key, file in request.files.items():
+                # Save to a temporary file
+                temp = tempfile.NamedTemporaryFile(delete=False)
+                file.save(temp.name)
+                temp.close()
+                
+                # Re-open the file for reading
+                files[key] = (file.filename, open(temp.name, 'rb'), file.content_type)
+            
+            # Make the request
+            response = requests.post(
+                f"{chatbot_node}/chat",
+                data=data,
+                files=files,
+                headers=headers,
+                timeout=30
+            )
+            
+            # Clean up temporary files
+            for key, file_tuple in files.items():
+                file_tuple[1].close()  # Close file handle
+                os.unlink(file_tuple[1].name)  # Delete temp file
+                
+        else:
+            # For JSON and other content types
+            response = requests.post(
+                f"{chatbot_node}/chat",
+                headers={**headers, 'Content-Type': request.content_type},
+                data=request.get_data(),
+                timeout=30
+            )
+        
+        return Response(
+            response.content,
+            status=response.status_code,
+            content_type=response.headers.get('Content-Type', 'application/json')
+        )
+        
+    except requests.Timeout:
+        return jsonify({'error': 'Request to chatbot timed out'}), 504
+    except requests.RequestException as e:
+        return jsonify({'error': f'Error forwarding request to chatbot: {str(e)}'}), 502
+    except Exception as e:
+        print(f"Error in handle_external_chat: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     try:
