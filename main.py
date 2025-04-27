@@ -1,8 +1,9 @@
 from flask import Flask, request, jsonify
 from typing_extensions import List, TypedDict
 from langgraph.graph import START, StateGraph
-from llm_chat import init_llm_input, post_llm_input, LLMManager
-from singleton import VectorDBManager
+from llm_chat import init_llm_input, post_llm_input
+from singleton import LLMManager, VectorDBManager
+from audio_processor import SimpleAudioAnalyzer as AudioAnalyzer
 from langchain_core.documents import Document
 from threading import Thread, Event
 import ngrok
@@ -54,10 +55,11 @@ app = Flask(__name__)
 llm_instance = None
 is_initialized = False
 vector_db_instance = None
+audio_analyzer_instance = None
 shutdown_event = Event()
 
 def initialize_llm():
-    global llm_instance,vector_db_instance, is_initialized
+    global llm_instance, vector_db_instance, audio_analyzer_instance, is_initialized
     try:
         # Initialize Vector DB
         print("Initializing Vector Database...")
@@ -69,14 +71,19 @@ def initialize_llm():
         # Initialize LLM
         print("Initializing LLM...")
         llm_instance = LLMManager.get_instance()
-        if llm_instance.llm:
-            print("LLM initialized and ready")
-            is_initialized = True
-        else:
+        if not llm_instance.llm:
             raise RuntimeError("Failed to initialize LLM")
-            is_initialized = False
+        print("LLM initialized successfully")
+        
+        # Initialize Audio Analyzer
+        print("Initializing Audio Analyzer...")
+        audio_analyzer_instance = AudioAnalyzer.get_instance()
+        print("Audio Analyzer initialized successfully")
+        
+        is_initialized = True
+        print("All components initialized and ready")
     except Exception as e:
-        print(f"Error initializing LLM: {str(e)}")
+        print(f"Error initializing components: {str(e)}")
         is_initialized = False    
 
 
@@ -88,6 +95,7 @@ def check_initialization(f):
                 'message': 'Model is still initializing. Please try again later.'
             }), 503  # Service Unavailable
         return f(*args, **kwargs)
+    wrapper.__name__ = f.__name__  # Give the wrapper the same name as the decorated function
     return wrapper
 
 class State(TypedDict):
@@ -99,6 +107,7 @@ class State(TypedDict):
     initial_diagnosis: str
     vectordb_results: str
     final_analysis: str
+    audio_analysis: dict
 
 def init(state: State):
     """Initial diagnosis stage"""
@@ -106,14 +115,48 @@ def init(state: State):
         session_id = llm_instance.create_session()
         state["session_id"] = session_id
         data = state.get("data", {})
+        
+        # Process audio data if available
+        audio_analysis = {}
+        if data.get("audio"):
+            print(f"Processing audio data in init stage")
+            try:
+                audio_analysis = audio_analyzer_instance.analyze_audio(data["audio"])
+                print(f"Audio analysis result: {audio_analysis}")
+                state["audio_analysis"] = audio_analysis
+            except Exception as e:
+                print(f"Error analyzing audio in init stage: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                audio_analysis = {"error": str(e), "detected_emotion": "unknown"}
+                state["audio_analysis"] = audio_analysis
+        
+        # Get non-None keys for context
         not_none_keys = [k for k, v in data.items() if v not in (None, "", [])]
-        initial_response = init_llm_input(state["question"], state.get("image"),not_none_keys)
+        
+        # Include audio emotion in the context for LLM
+        audio_context = ""
+        if "audio_analysis" in state and "detected_emotion" in state["audio_analysis"]:
+            emotion = state["audio_analysis"]["detected_emotion"]
+            audio_context = f"Audio analysis detected emotional state: {emotion}"
+            print(f"Adding audio context to LLM input: {audio_context}")
+        
+        # Get initial diagnosis
+        initial_response = init_llm_input(
+            question=state["question"],
+            image=state.get("image"),
+            not_none_keys=not_none_keys,
+            audio_context=audio_context
+        )
+        
         state["initial_diagnosis"] = initial_response
         state["answer"] = initial_response
+        
         analysis = {
             "initial_diagnosis": initial_response,
             "vectordb_results": "",
-            "final_analysis": ""
+            "final_analysis": "",
+            "audio_analysis": audio_analysis
         }
         
         return {
@@ -122,25 +165,34 @@ def init(state: State):
             **analysis
         }
     except Exception as e:
+        print(f"Error in init stage: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 def retrieve(state: State):
     """Vector DB lookup stage"""
     try:
+        print(f"Looking up similar data in vector DB for: {state['answer'][:50]}...")
         docs = vector_db_instance.vector_store.similarity_search(state["answer"], k=1)
         state["context"] = docs
         vectordb_results = "\n".join([doc.page_content for doc in docs])
         state["vectordb_results"] = vectordb_results
         
+        print(f"Retrieved {len(docs)} documents from vector DB")
         
         return {
             "answer": vectordb_results, 
             "stage": "retrieve",
             "initial_diagnosis": state["initial_diagnosis"],
             "vectordb_results": vectordb_results,
-            "final_analysis": ""
+            "final_analysis": "",
+            "audio_analysis": state.get("audio_analysis", {})
         }
     except Exception as e:
+        print(f"Error in retrieve stage: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 def generate(state: State):
@@ -149,7 +201,27 @@ def generate(state: State):
         docs_content = state["vectordb_results"]
         initial_diagnosis = state["initial_diagnosis"]
         question = state["question"]
-        final_response = post_llm_input(state["initial_diagnosis"],state["question"], docs_content)
+        
+        # Include audio analysis in the final response generation if available
+        audio_context = ""
+        if "audio_analysis" in state and state["audio_analysis"]:
+            audio_emotion = state["audio_analysis"].get("detected_emotion", "unknown")
+            audio_context = f"Patient's speech emotional state: {audio_emotion}"
+            print(f"Adding audio context to final analysis: {audio_context}")
+        
+        # Get data for context
+        data = state.get("data", {})
+        
+        print(f"Generating final analysis with context length: {len(docs_content)}")
+        final_response = post_llm_input(
+            initial_diagnosis=state["initial_diagnosis"],
+            question=state["question"], 
+            context=docs_content,
+            not_none_keys_data=data,
+            audio_context=audio_context
+        )
+        
+        print(f"Final response generated: {final_response[:100]}...")
         state["final_analysis"] = final_response
         
         return {
@@ -157,26 +229,26 @@ def generate(state: State):
             "stage": "final",
             "initial_diagnosis": state["initial_diagnosis"],
             "vectordb_results": state["vectordb_results"],
-            "final_analysis": final_response
+            "final_analysis": final_response,
+            "audio_analysis": state.get("audio_analysis", {})
         }
     except Exception as e:
+        print(f"Error in generate stage: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"answer": str(e)}
-
 
 def start_router(state: State):
     """Route to the correct start node based on presence of typing, gait, or audio."""
     data = state.get("data", {})
-    match data:
-        case {"typing": t, **rest} if t not in (None, "", []):
-            return "typing_mid"
-        case {"gait": g, **rest} if g not in (None, "", []):
-            return "gait_mid"
-        case {"audio": a, **rest} if a not in (None, "", []):
-            return "audio_mid"
-        case _:
-            return "norm_mid"
-
-
+    if data.get("typing") not in (None, "", []):
+        return "typing_mid"
+    elif data.get("gait") not in (None, "", []):
+        return "gait_mid"
+    elif data.get("audio") not in (None, "", []):
+        return "audio_mid"
+    else:
+        return "norm_mid"
 
 # Initialize the graph
 graph_builder = StateGraph(State)
@@ -188,7 +260,6 @@ graph_builder.add_edge("init", "retrieve")
 graph_builder.add_edge("retrieve", "generate")
 graph = graph_builder.compile()
 
-
 @app.route('/api/chat', methods=['POST'])
 @app.route('/chat', methods=['POST'])
 @check_initialization
@@ -199,77 +270,134 @@ def chat():
         gait = None
         audio = None
         typing = None
-        # Handle both form data and JSON
+        
+        # Handle form data
         if request.content_type and request.content_type.startswith('multipart/form-data'):
             question = request.form.get('question')
-            image = None
-            gait = None
-            audio = None
-            typing = None
-            match request.content_type:
-                case ct if ct and ct.startswith('multipart/form-data'):
-                    question = request.form.get('question')
-                    if 'image' in request.files:
-                        image_file = request.files['image']
-                        image = image_to_base64_data_uri(image_file)
-                    if 'gait' in request.files:
-                        gait = request.files['gait']
-                    if 'audio' in request.files:
-                        audio = request.files['audio']
-                    if 'typing' in request.form:
-                        typing = request.form.get('typing')
-                case ct if ct and ct.startswith('application/json'):
-                    data = request.get_json(silent=True)
-                    question = data.get('question') if data else None
-                    if 'image' in data:
-                        image = image_to_base64_data_uri(data['image'])
-                    if 'gait' in data:
-                        gait = data['gait']
-                    if 'audio' in data:
-                        audio = data['audio']
-                    if 'typing' in data:
-                        typing = data['typing']
-                case _:
-                    data = request.get_json(silent=True)
-                    question = data.get('question') if data else None
-
+            if 'image' in request.files:
+                image_file = request.files['image']
+                image = image_to_base64_data_uri(image_file)
+            if 'gait' in request.files:
+                gait = request.files['gait']
+            if 'audio' in request.files:
+                audio = request.files['audio']
+                print(f"Received audio file in chat endpoint: {audio.filename}, content_type: {audio.content_type}")
+            if 'typing' in request.form:
+                typing = request.form.get('typing')
+        # Handle JSON data
+        elif request.content_type and request.content_type.startswith('application/json'):
+            data = request.get_json(silent=True)
+            if data:
+                question = data.get('question')
+                if 'image' in data:
+                    image = image_to_base64_data_uri(data['image'])
+                if 'gait' in data:
+                    gait = data['gait']
+                if 'audio' in data:
+                    audio = data['audio']
+                    print(f"Received audio data in JSON format in chat endpoint")
+                if 'typing' in data:
+                    typing = data['typing']
+        # Fallback for other content types
+        else:
+            data = request.get_json(silent=True)
+            question = data.get('question') if data else None
         
         if not question:
             return jsonify({'error': 'Question is required'}), 400
 
+        # Log the data we're processing
+        print(f"Processing chat request with question: {question}")
+        print(f"Audio data present: {audio is not None}")
+        
         initial_state = {
             "question": question,
             "image": image,
-            "data" : {
-                "gait": gait, "audio": audio, "typing": typing},
+            "data": {
+                "gait": gait,
+                "audio": audio, 
+                "typing": typing
+            },
             "context": [],
             "answer": "",
             "initial_diagnosis": "",
             "vectordb_results": "",
-            "final_analysis": ""
+            "final_analysis": "",
+            "audio_analysis": {}
         }
 
+        # Process the request through the graph
+        print("Invoking processing graph...")
         response = graph.invoke(initial_state)
+        print("Graph processing completed")
 
         # Clean up session after getting response
         if "session_id" in initial_state:
             llm_instance.delete_session(initial_state["session_id"])
 
-        vectordb_data = response.get("vectordb_results", "")
-        
-
+        # Format API response
         return jsonify({
             'status': 'success',
             'analysis': {
                 'initial_diagnosis': response.get("initial_diagnosis"),
-                'vectordb_results': vectordb_data,
-                'final_analysis': response.get("final_analysis")
+                'vectordb_results': response.get("vectordb_results", ""),
+                'final_analysis': response.get("final_analysis"),
+                'audio_analysis': response.get("audio_analysis", {})
             }
         })
           
-
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         app.logger.error(f"Error processing request: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+# Add a dedicated endpoint for audio analysis
+@app.route('/api/analyze_audio', methods=['POST'])
+@check_initialization
+def analyze_audio_endpoint():
+    try:
+        audio_data = None
+        
+        if request.content_type and request.content_type.startswith('multipart/form-data'):
+            if 'audio' in request.files:
+                audio_file = request.files['audio']
+                print(f"Received audio file: {audio_file.filename}, content_type: {audio_file.content_type}")
+                # Process the audio file directly as a FileStorage object
+                audio_data = audio_file
+            else:
+                print("No audio file found in the request files")
+                print(f"Request files: {request.files}")
+        elif request.content_type and request.content_type.startswith('application/json'):
+            data = request.get_json(silent=True)
+            if data and 'audio' in data:
+                audio_data = data['audio']
+                print(f"Received audio data in JSON")
+            else:
+                print("No audio data found in JSON request")
+        else:
+            print(f"Unsupported content type: {request.content_type}")
+        
+        if not audio_data:
+            return jsonify({'error': 'Audio data is required'}), 400
+            
+        # Analyze the audio
+        print(f"Calling analyze_audio with the audio data")
+        analysis = audio_analyzer_instance.analyze_audio(audio_data)
+        print(f"Analysis result: {analysis}")
+        
+        return jsonify({
+            'status': 'success',
+            'analysis': analysis
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        app.logger.error(f"Error analyzing audio: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e)
@@ -280,6 +408,7 @@ def get_status():
     status = {
         'llm': bool(llm_instance and llm_instance.llm),
         'vector_db': bool(vector_db_instance and vector_db_instance.vector_store),
+        'audio_analyzer': bool(audio_analyzer_instance),
         'overall': is_initialized
     }
     
@@ -625,3 +754,5 @@ if __name__ == '__main__':
         # Ensure we deregister before exiting
         deregister_from_node_handler()
         sys.exit(0)
+
+
