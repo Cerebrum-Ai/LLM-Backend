@@ -241,7 +241,7 @@ def chat():
             "question": question,
             "image": image,
             "data" : {
-                "gait": gait,audio: audio, typing: typing},
+                "gait": gait, "audio": audio, "typing": typing},
             "context": [],
             "answer": "",
             "initial_diagnosis": "",
