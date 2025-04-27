@@ -17,38 +17,78 @@ import base64
 import os
 import signal
 from waitress import serve
+import subprocess
+
 load_dotenv()
 # Add these constants at the top of the file
 NODE_HANDLER_URL = os.environ.get("NODE_HANDLER_URL")
 HEARTBEAT_INTERVAL = 30  # seconds
 auth_tokens_str = os.environ.get("NGROK_AUTH_TOKENS")
+
+# Add this global variable at the top with other constants
+current_ngrok_url = None
+i = 0  # Initialize index for auth tokens
+
+# Check required environment variables
 if not auth_tokens_str:
     print("Error: NGROK_AUTH_TOKENS environment variable not set in .env file or environment.")
     print("Please create a .env file in the project root and add the variable:")
     print("NGROK_AUTH_TOKENS=token1,token2,token3,...")
     sys.exit(1) # Exit if the variable is not set
+
+if not NODE_HANDLER_URL:
+    print("Error: NODE_HANDLER_URL environment variable not set in .env file or environment.")
+    print("Please create a .env file in the project root and add the variable:")
+    print("NODE_HANDLER_URL=http://your-node-handler-url")
+    sys.exit(1) # Exit if the variable is not set
+
 auth = auth_tokens_str.split(',')
 
-# Add this global variable at the top with other constants
-current_ngrok_url = None
+def check_ffmpeg_installed():
+    """Check if ffmpeg is installed and accessible"""
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode == 0:
+            print("FFmpeg is installed and accessible")
+            return True
+        else:
+            print("Warning: FFmpeg test command returned non-zero exit code")
+            return False
+    except Exception as e:
+        print(f"Warning: FFmpeg is not installed or not in PATH: {str(e)}")
+        print("Audio conversion functionality may not work properly")
+        return False
 
 def image_to_base64_data_uri(input_source):
     """
     Convert an image to base64 data URI format.
     input_source can be either a file path or a URL.
     """
-    if input_source.startswith(('http://', 'https://')):
-        # If input is a URL, download the image
-        response = requests.get(input_source)
-        image_data = response.content
-    else:
-        # If input is a file path, read the file
-        with open(input_source, "rb") as img_file:
-            image_data = img_file.read()
-    
-    # Convert to base64
-    base64_data = base64.b64encode(image_data).decode('utf-8')
-    return f"data:image/png;base64,{base64_data}"
+    try:
+        if input_source.startswith(('http://', 'https://')):
+            # If input is a URL, download the image
+            try:
+                response = requests.get(input_source, timeout=10)
+                response.raise_for_status()  # Raise exception for bad status codes
+                image_data = response.content
+            except requests.exceptions.RequestException as e:
+                print(f"Error downloading image from URL {input_source}: {str(e)}")
+                return None
+        else:
+            # If input is a file path, read the file
+            try:
+                with open(input_source, "rb") as img_file:
+                    image_data = img_file.read()
+            except (IOError, OSError) as e:
+                print(f"Error reading image file {input_source}: {str(e)}")
+                return None
+        
+        # Convert to base64
+        base64_data = base64.b64encode(image_data).decode('utf-8')
+        return f"data:image/png;base64,{base64_data}"
+    except Exception as e:
+        print(f"Error processing image {input_source}: {str(e)}")
+        return None
 
 
 app = Flask(__name__)
@@ -61,6 +101,9 @@ shutdown_event = Event()
 def initialize_llm():
     global llm_instance, vector_db_instance, audio_analyzer_instance, is_initialized
     try:
+        # Check for FFmpeg
+        check_ffmpeg_installed()
+        
         # Initialize Vector DB
         print("Initializing Vector Database...")
         vector_db_instance = VectorDBManager.get_instance()
@@ -78,7 +121,16 @@ def initialize_llm():
         # Initialize Audio Analyzer
         print("Initializing Audio Analyzer...")
         audio_analyzer_instance = AudioAnalyzer.get_instance()
-        print("Audio Analyzer initialized successfully")
+        
+        # Verify audio analyzer works by testing a simple operation
+        try:
+            # Simple validation test - just check that the model exists
+            if hasattr(audio_analyzer_instance, '_model') and audio_analyzer_instance._model is not None:
+                print("Audio Analyzer initialized successfully")
+            else:
+                print("Warning: Audio Analyzer initialized but model may not be loaded properly")
+        except Exception as e:
+            print(f"Warning: Audio Analyzer validation failed: {str(e)}")
         
         is_initialized = True
         print("All components initialized and ready")
@@ -705,12 +757,8 @@ def wait_for_flask(port, max_retries=5):
     return False
 
 if __name__ == '__main__':
-    global i 
-    i = 0
     try:
-        
         # Set up signal handlers for graceful shutdown
-        
         def handle_shutdown(signum, frame):
             print("\nReceived shutdown signal. Cleaning up...")
             shutdown_event.set()
@@ -721,12 +769,20 @@ if __name__ == '__main__':
         signal.signal(signal.SIGINT, handle_shutdown)
         signal.signal(signal.SIGTERM, handle_shutdown)
         
+        # Initialize LLM with timeout
         init_thread = Thread(target=initialize_llm, daemon=True)
-        ngrok_thread = Thread(target=run_ngrok, daemon=True)
         print("Starting LLM/VectorDB initialization...")
         init_thread.start()
-        init_thread.join()
-        print("Initialization complete.")
+        
+        # Add timeout for initialization
+        max_init_wait = 300  # 5 minutes timeout
+        init_thread.join(timeout=max_init_wait)
+        if init_thread.is_alive():
+            print(f"Warning: Initialization is taking longer than {max_init_wait} seconds")
+            print("Continuing startup process anyway...")
+        else:
+            print("Initialization complete.")
+        
         # Start Flask app in a separate thread
         flask_port = 5050
         flask_thread = Thread(target=lambda: serve(app, host='0.0.0.0', port=flask_port, threads=4), daemon=True) 
@@ -752,7 +808,10 @@ if __name__ == '__main__':
     finally:
         shutdown_event.set()
         # Ensure we deregister before exiting
-        deregister_from_node_handler()
+        try:
+            deregister_from_node_handler()
+        except Exception as e:
+            print(f"Error during final deregistration: {str(e)}")
         sys.exit(0)
 
 
