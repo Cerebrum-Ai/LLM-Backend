@@ -3,7 +3,6 @@ from typing_extensions import List, TypedDict
 from langgraph.graph import START, StateGraph
 from llm_chat import init_llm_input, post_llm_input
 from singleton import LLMManager, VectorDBManager
-from audio_processor import SimpleAudioAnalyzer as AudioAnalyzer
 from langchain_core.documents import Document
 from threading import Thread, Event
 import ngrok
@@ -18,6 +17,7 @@ import os
 import signal
 from waitress import serve
 import subprocess
+import tempfile
 
 load_dotenv()
 # Add these constants at the top of the file
@@ -44,20 +44,7 @@ if not NODE_HANDLER_URL:
 
 auth = auth_tokens_str.split(',')
 
-def check_ffmpeg_installed():
-    """Check if ffmpeg is installed and accessible"""
-    try:
-        result = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode == 0:
-            print("FFmpeg is installed and accessible")
-            return True
-        else:
-            print("Warning: FFmpeg test command returned non-zero exit code")
-            return False
-    except Exception as e:
-        print(f"Warning: FFmpeg is not installed or not in PATH: {str(e)}")
-        print("Audio conversion functionality may not work properly")
-        return False
+
 
 def image_to_base64_data_uri(input_source):
     """
@@ -95,21 +82,18 @@ app = Flask(__name__)
 llm_instance = None
 is_initialized = False
 vector_db_instance = None
-audio_analyzer_instance = None
 shutdown_event = Event()
 
 def initialize_llm():
-    global llm_instance, vector_db_instance, audio_analyzer_instance, is_initialized
+    global llm_instance, vector_db_instance, is_initialized
     try:
-        # Check for FFmpeg
-        check_ffmpeg_installed()
+        
         
         # Initialize Vector DB
         print("Initializing Vector Database...")
         vector_db_instance = VectorDBManager.get_instance()
-        if not vector_db_instance.vector_store:
-            raise RuntimeError("Failed to initialize Vector Database")
-        print("Vector Database initialized successfully")
+        if not vector_db_instance:
+            raise RuntimeError("Failed to initialize VectorDB")
         
         # Initialize LLM
         print("Initializing LLM...")
@@ -118,26 +102,11 @@ def initialize_llm():
             raise RuntimeError("Failed to initialize LLM")
         print("LLM initialized successfully")
         
-        # Initialize Audio Analyzer
-        print("Initializing Audio Analyzer...")
-        audio_analyzer_instance = AudioAnalyzer.get_instance()
-        
-        # Verify audio analyzer works by testing a simple operation
-        try:
-            # Simple validation test - just check that the model exists
-            if hasattr(audio_analyzer_instance, '_model') and audio_analyzer_instance._model is not None:
-                print("Audio Analyzer initialized successfully")
-            else:
-                print("Warning: Audio Analyzer initialized but model may not be loaded properly")
-        except Exception as e:
-            print(f"Warning: Audio Analyzer validation failed: {str(e)}")
-        
         is_initialized = True
         print("All components initialized and ready")
     except Exception as e:
         print(f"Error initializing components: {str(e)}")
         is_initialized = False    
-
 
 def check_initialization(f):
     def wrapper(*args, **kwargs):
@@ -159,7 +128,6 @@ class State(TypedDict):
     initial_diagnosis: str
     vectordb_results: str
     final_analysis: str
-    audio_analysis: dict
 
 def init(state: State):
     """Initial diagnosis stage"""
@@ -168,37 +136,25 @@ def init(state: State):
         state["session_id"] = session_id
         data = state.get("data", {})
         
-        # Process audio data if available
-        audio_analysis = {}
-        if data.get("audio"):
-            print(f"Processing audio data in init stage")
-            try:
-                audio_analysis = audio_analyzer_instance.analyze_audio(data["audio"])
-                print(f"Audio analysis result: {audio_analysis}")
-                state["audio_analysis"] = audio_analysis
-            except Exception as e:
-                print(f"Error analyzing audio in init stage: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                audio_analysis = {"error": str(e), "detected_emotion": "unknown"}
-                state["audio_analysis"] = audio_analysis
-        
         # Get non-None keys for context
         not_none_keys = [k for k, v in data.items() if v not in (None, "", [])]
         
-        # Include audio emotion in the context for LLM
-        audio_context = ""
-        if "audio_analysis" in state and "detected_emotion" in state["audio_analysis"]:
-            emotion = state["audio_analysis"]["detected_emotion"]
-            audio_context = f"Audio analysis detected emotional state: {emotion}"
-            print(f"Adding audio context to LLM input: {audio_context}")
+        # Extract ML results for LLM context
+        ml_results = {}
         
-        # Get initial diagnosis
+        # Extract audio emotion results if available
+        if isinstance(data.get("audio"), dict) and "emotion" in data["audio"]:
+            ml_results["audio"] = data["audio"]["emotion"]
+        
+        # Add other ML result types here as they become available
+        # For example: image analysis, gait analysis, typing pattern analysis
+        
+        # Get initial diagnosis with ML results
         initial_response = init_llm_input(
             question=state["question"],
             image=state.get("image"),
             not_none_keys=not_none_keys,
-            audio_context=audio_context
+            ml_results=ml_results
         )
         
         state["initial_diagnosis"] = initial_response
@@ -207,13 +163,11 @@ def init(state: State):
         analysis = {
             "initial_diagnosis": initial_response,
             "vectordb_results": "",
-            "final_analysis": "",
-            "audio_analysis": audio_analysis
+            "final_analysis": ""
         }
         
         return {
-            "answer": initial_response, 
-            "stage": "initial",
+            "answer": state["answer"],
             **analysis
         }
     except Exception as e:
@@ -239,7 +193,6 @@ def retrieve(state: State):
             "initial_diagnosis": state["initial_diagnosis"],
             "vectordb_results": vectordb_results,
             "final_analysis": "",
-            "audio_analysis": state.get("audio_analysis", {})
         }
     except Exception as e:
         print(f"Error in retrieve stage: {str(e)}")
@@ -248,21 +201,24 @@ def retrieve(state: State):
         return {"error": str(e)}
 
 def generate(state: State):
-    """Final detailed analysis stage"""
+    """Final generation stage"""
     try:
         docs_content = state["vectordb_results"]
         initial_diagnosis = state["initial_diagnosis"]
         question = state["question"]
         
-        # Include audio analysis in the final response generation if available
-        audio_context = ""
-        if "audio_analysis" in state and state["audio_analysis"]:
-            audio_emotion = state["audio_analysis"].get("detected_emotion", "unknown")
-            audio_context = f"Patient's speech emotional state: {audio_emotion}"
-            print(f"Adding audio context to final analysis: {audio_context}")
-        
         # Get data for context
         data = state.get("data", {})
+        
+        # Extract ML results for LLM context
+        ml_results = {}
+        
+        # Extract audio emotion results if available
+        if isinstance(data.get("audio"), dict) and "emotion" in data["audio"]:
+            ml_results["audio"] = data["audio"]["emotion"]
+        
+        # Add other ML result types here as they become available
+        # For example: image analysis, gait analysis, typing pattern analysis
         
         print(f"Generating final analysis with context length: {len(docs_content)}")
         final_response = post_llm_input(
@@ -270,7 +226,7 @@ def generate(state: State):
             question=state["question"], 
             context=docs_content,
             not_none_keys_data=data,
-            audio_context=audio_context
+            ml_results=ml_results
         )
         
         print(f"Final response generated: {final_response[:100]}...")
@@ -281,8 +237,7 @@ def generate(state: State):
             "stage": "final",
             "initial_diagnosis": state["initial_diagnosis"],
             "vectordb_results": state["vectordb_results"],
-            "final_analysis": final_response,
-            "audio_analysis": state.get("audio_analysis", {})
+            "final_analysis": final_response
         }
     except Exception as e:
         print(f"Error in generate stage: {str(e)}")
@@ -374,8 +329,7 @@ def chat():
             "answer": "",
             "initial_diagnosis": "",
             "vectordb_results": "",
-            "final_analysis": "",
-            "audio_analysis": {}
+            "final_analysis": ""
         }
 
         # Process the request through the graph
@@ -394,7 +348,6 @@ def chat():
                 'initial_diagnosis': response.get("initial_diagnosis"),
                 'vectordb_results': response.get("vectordb_results", ""),
                 'final_analysis': response.get("final_analysis"),
-                'audio_analysis': response.get("audio_analysis", {})
             }
         })
           
@@ -407,49 +360,95 @@ def chat():
             'message': str(e)
         }), 500
 
-# Add a dedicated endpoint for audio analysis
+# Replace the audio analysis endpoint
 @app.route('/api/analyze_audio', methods=['POST'])
 @check_initialization
 def analyze_audio_endpoint():
     try:
         audio_data = None
+        temp_path = None
         
+        # Process form data or JSON
         if request.content_type and request.content_type.startswith('multipart/form-data'):
             if 'audio' in request.files:
                 audio_file = request.files['audio']
                 print(f"Received audio file: {audio_file.filename}, content_type: {audio_file.content_type}")
-                # Process the audio file directly as a FileStorage object
-                audio_data = audio_file
+                
+                # Save the uploaded file to a temporary file
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                    temp_path = temp_file.name
+                    audio_file.save(temp_file)
             else:
                 print("No audio file found in the request files")
-                print(f"Request files: {request.files}")
+                return jsonify({'error': 'No audio file provided'}), 400
         elif request.content_type and request.content_type.startswith('application/json'):
             data = request.get_json(silent=True)
             if data and 'audio' in data:
                 audio_data = data['audio']
-                print(f"Received audio data in JSON")
+                # If it's base64 data, save it
+                if isinstance(audio_data, str) and audio_data.startswith('data:audio'):
+                    audio_content = audio_data.split(',')[1]
+                    decoded_audio = base64.b64decode(audio_content)
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                        temp_path = temp_file.name
+                        temp_file.write(decoded_audio)
             else:
                 print("No audio data found in JSON request")
+                return jsonify({'error': 'No audio data provided'}), 400
         else:
             print(f"Unsupported content type: {request.content_type}")
-        
-        if not audio_data:
-            return jsonify({'error': 'Audio data is required'}), 400
+            return jsonify({'error': f'Unsupported content type: {request.content_type}'}), 400
             
-        # Analyze the audio
-        print(f"Calling analyze_audio with the audio data")
-        analysis = audio_analyzer_instance.analyze_audio(audio_data)
-        print(f"Analysis result: {analysis}")
+        if not temp_path:
+            return jsonify({'error': 'Failed to process audio data'}), 400
         
-        return jsonify({
-            'status': 'success',
-            'analysis': analysis
-        })
+        # Call ML models endpoint for audio analysis
+        ml_models_url = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
+        
+        try:
+            # Make request to models service
+            response = requests.post(
+                f"{ml_models_url}/ml/process",
+                json={
+                    "url": temp_path,
+                    "data_type": "audio",
+                    "model": "emotion"
+                },
+                timeout=10
+            )
+            
+            # Clean up the temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            
+            if response.status_code == 200:
+                analysis = response.json()
+                print(f"Analysis result: {analysis}")
+                return jsonify({
+                    'status': 'success',
+                    'analysis': analysis
+                })
+            else:
+                print(f"Error from ML service: {response.text}")
+                return jsonify({
+                    'status': 'error',
+                    'message': f"ML service returned error: {response.text}"
+                }), 500
+                
+        except requests.RequestException as e:
+            print(f"Error calling ML service: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': f"Failed to communicate with ML service: {str(e)}"
+            }), 500
         
     except Exception as e:
         import traceback
         traceback.print_exc()
         app.logger.error(f"Error analyzing audio: {str(e)}")
+        # Clean up any temporary files
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
         return jsonify({
             'status': 'error',
             'message': str(e)
@@ -460,7 +459,7 @@ def get_status():
     status = {
         'llm': bool(llm_instance and llm_instance.llm),
         'vector_db': bool(vector_db_instance and vector_db_instance.vector_store),
-        'audio_analyzer': bool(audio_analyzer_instance),
+        # Remove audio_analyzer check as it's now in models.py
         'overall': is_initialized
     }
     
@@ -813,5 +812,3 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"Error during final deregistration: {str(e)}")
         sys.exit(0)
-
-
