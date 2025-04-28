@@ -15,7 +15,7 @@ def generate_test_data(condition="normal"):
     if condition == "parkinsons":
         avg_press = 180
         std_press = 60
-        avg_between = 300
+        avg_between = 300 
         std_between = 120
         keys = "The quick brown fox jumps over the lazy dog."
     elif condition == "essential_tremor":
