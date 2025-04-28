@@ -12,11 +12,15 @@ import tempfile
 import base64
 import subprocess
 from pathlib import Path
+import json
 
 # Import ML models - audio processing is just one of potentially many ML types
 audio_processor_path = os.path.join(os.path.dirname(__file__), 'models', 'audio', 'emotion')
+typing_processor_path = os.path.join(os.path.dirname(__file__), 'models', 'typing', 'pattern')
 sys.path.append(audio_processor_path)
+sys.path.append(typing_processor_path)
 from audio_processor import SimpleAudioAnalyzer
+from typing_processor import KeystrokeProcessor
 
 load_dotenv()
 
@@ -43,6 +47,9 @@ class MLModels:
     _registry = {
         'audio': {
             'emotion': lambda: SimpleAudioAnalyzer.get_instance()
+        },
+        'typing': {
+            'pattern': lambda: KeystrokeProcessor.get_instance()
         }
         # Add more model types and names here as they become available:
         # 'image': {
@@ -100,6 +107,9 @@ class MLModels:
         if data_type == 'audio':
             if model == 'emotion':
                 return cls._process_audio_emotion(model_instance, data)
+        elif data_type == 'typing':
+            if model == 'pattern':
+                return cls._process_typing_pattern(model_instance, data)
         
         # Add more model type processors as they become available
         
@@ -115,6 +125,17 @@ class MLModels:
             import traceback
             traceback.print_exc()
             return {"error": str(e), "detected_emotion": "unknown"}
+
+    @classmethod
+    def _process_typing_pattern(cls, model_instance, typing_data):
+        """Process typing data with pattern detection model"""
+        try:
+            return model_instance.analyze_typing(typing_data)
+        except Exception as e:
+            print(f"Error processing typing: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
 
 def initialize_models():
     """Initialize all ML models"""
@@ -317,6 +338,46 @@ def process_ml_data():
                 import traceback
                 traceback.print_exc()
                 result = {"error": str(e), "detected_emotion": "unknown"}
+        elif data_type == 'typing':
+            print(f"Processing typing data with model: {model}")
+            
+            try:
+                # Process typing data (either JSON string or direct object)
+                try:
+                    # Determine if data is direct object or JSON string
+                    if isinstance(url, str) and url.startswith('{'):
+                        # It's a JSON string
+                        typing_data = json.loads(url)
+                    elif isinstance(url, dict):
+                        # Already a dict object
+                        typing_data = url
+                    else:
+                        # Assume it's a URL with data
+                        try:
+                            response = requests.get(url)
+                            typing_data = response.json()
+                        except:
+                            # Try as file path
+                            if os.path.exists(url):
+                                with open(url, 'r') as f:
+                                    typing_data = json.load(f)
+                            else:
+                                raise ValueError(f"Invalid typing data source: {url}")
+                    
+                    # Process with the appropriate model
+                    print(f"Analyzing typing data")
+                    result = MLModels.process('typing', model, typing_data)
+                except requests.RequestException as e:
+                    print(f"Error fetching typing data: {str(e)}")
+                    result = {"error": f"Could not fetch typing data: {str(e)}"}
+                except json.JSONDecodeError as e:
+                    print(f"Error parsing typing data JSON: {str(e)}")
+                    result = {"error": f"Invalid JSON format: {str(e)}"}
+            except Exception as e:
+                print(f"Error processing typing: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                result = {"error": str(e)}
         else:
             # Other data type handling will be added here as models are implemented
             print(f"Received ML request for unimplemented data type: {data_type}/{model}")
