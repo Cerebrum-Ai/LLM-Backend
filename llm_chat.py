@@ -88,8 +88,18 @@ def post_llm_input(initial_diagnosis, question, context, not_none_keys_data=None
             analysis = not_none_keys_data["image"]["analysis"]
             ml_context_parts.append(f"Image analysis detected: {analysis}")
         
-        # Add other ML result types as they become available
-        # For example: gait analysis, typing pattern analysis
+        # Extract typing pattern analysis if available
+        if isinstance(not_none_keys_data.get("typing"), dict) and "pattern" in not_none_keys_data["typing"]:
+            pattern = not_none_keys_data["typing"]["pattern"]
+            if "detected_condition" in pattern:
+                condition = pattern.get("detected_condition", "unknown")
+                ml_context_parts.append(f"Typing pattern analysis detected: {condition}")
+                
+                # Include key features if available
+                if "features" in pattern:
+                    features = pattern["features"]
+                    feature_str = ", ".join([f"{k}: {v:.2f}" for k, v in features.items()])
+                    ml_context_parts.append(f"Typing metrics: {feature_str}")
     
     if ml_results:
         for data_type, result in ml_results.items():
@@ -97,6 +107,13 @@ def post_llm_input(initial_diagnosis, question, context, not_none_keys_data=None
                 ml_context_parts.append(f"Audio analysis detected emotional state: {result['detected_emotion']}")
             elif data_type == "image" and "analysis" in result:
                 ml_context_parts.append(f"Image analysis detected: {result['analysis']}")
+            elif data_type == "typing" and "detected_condition" in result:
+                ml_context_parts.append(f"Typing pattern analysis detected: {result['detected_condition']}")
+                # Include typing features if available
+                if "features" in result:
+                    features = result["features"]
+                    feature_str = ", ".join([f"{k}: {v:.2f}" for k, v in features.items()])
+                    ml_context_parts.append(f"Typing metrics: {feature_str}")
             # Add other ML result types as they become available
     
     ml_context = "\n".join(ml_context_parts)
