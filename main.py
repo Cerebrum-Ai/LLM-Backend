@@ -305,6 +305,33 @@ def chat():
                     print(f"Received audio data in JSON format in chat endpoint")
                 if 'typing' in data:
                     typing = data['typing']
+                    print(f"Received typing data in JSON format in chat endpoint")
+                    
+                    # If typing data contains keystrokes but not analysis, process it
+                    if isinstance(typing, dict) and 'keystrokes' in typing and 'pattern' not in typing:
+                        try:
+                            # Call the ML model service to analyze typing
+                            ml_models_url = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
+                            response = requests.post(
+                                f"{ml_models_url}/ml/process",
+                                json={
+                                    "url": typing,
+                                    "data_type": "typing",
+                                    "model": "pattern"
+                                },
+                                timeout=10
+                            )
+                            
+                            if response.status_code == 200:
+                                # Add the analysis to the typing data
+                                typing = {
+                                    "raw": typing,
+                                    "pattern": response.json()
+                                }
+                                print(f"Added typing pattern analysis: {typing['pattern']}")
+                        except Exception as e:
+                            print(f"Error processing typing data: {str(e)}")
+                            # Continue with raw typing data if analysis fails
         # Fallback for other content types
         else:
             data = request.get_json(silent=True)
@@ -449,6 +476,72 @@ def analyze_audio_endpoint():
         # Clean up any temporary files
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/analyze_typing', methods=['POST'])
+@check_initialization
+def analyze_typing_endpoint():
+    try:
+        typing_data = None
+        
+        # Process JSON data
+        if request.content_type and request.content_type.startswith('application/json'):
+            data = request.get_json(silent=True)
+            if data and ('keystrokes' in data or 'typing' in data):
+                typing_data = data.get('typing', data)  # Use 'typing' field if present, otherwise use entire payload
+            else:
+                print("No typing data found in JSON request")
+                return jsonify({'error': 'No typing data provided'}), 400
+        else:
+            print(f"Unsupported content type: {request.content_type}")
+            return jsonify({'error': f'Typing data must be provided as JSON'}), 400
+            
+        if not typing_data:
+            return jsonify({'error': 'Failed to process typing data'}), 400
+        
+        # Call ML models endpoint for typing analysis
+        ml_models_url = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
+        
+        try:
+            # Make request to models service
+            response = requests.post(
+                f"{ml_models_url}/ml/process",
+                json={
+                    "url": typing_data,  # Pass the typing data directly
+                    "data_type": "typing",
+                    "model": "pattern"
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                analysis = response.json()
+                print(f"Typing analysis result: {analysis}")
+                return jsonify({
+                    'status': 'success',
+                    'analysis': analysis
+                })
+            else:
+                print(f"Error from ML service: {response.text}")
+                return jsonify({
+                    'status': 'error',
+                    'message': f"ML service returned error: {response.text}"
+                }), 500
+                
+        except requests.RequestException as e:
+            print(f"Error calling ML service: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': f"Failed to communicate with ML service: {str(e)}"
+            }), 500
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        app.logger.error(f"Error analyzing typing: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e)
