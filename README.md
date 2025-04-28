@@ -19,6 +19,13 @@ The system consists of two main components that work together:
      - Audio emotion analysis model
      - Keystroke pattern analysis for neurological screening
 
+3. **Performance Monitoring System (monitor.py)**:
+   - Monitors the health and performance of all services
+   - Tracks API endpoint response times
+   - Monitors system resource usage
+   - Provides a real-time dashboard
+   - Logs issues and errors for troubleshooting
+
 ## Prerequisites
 
 - Python 3.9+ (3.13 recommended)
@@ -545,6 +552,7 @@ LLM-Backend/
 ├── test_endpoints.py         # Endpoint testing script
 ├── start_services.sh         # Service starter script
 ├── stop_services.sh          # Service stopper script
+├── monitor.py                # Performance monitoring system
 ├── env_example               # Example .env file
 ├── models/                   # ML model implementations
 │   ├── audio/                # Audio analysis models
@@ -554,6 +562,127 @@ LLM-Backend/
 ├── Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf  # Medical LLM model
 └── phi-2.Q5_K_M.gguf         # General purpose LLM model
 ```
+
+## Performance Monitoring
+
+The system includes a comprehensive performance monitoring tool (`monitor.py`) that provides real-time visibility into system health, API endpoint performance, and resource usage.
+
+### Features
+
+- **Real-time Dashboard**: Visual display of service status and performance metrics
+- **API Endpoint Monitoring**: Tests all endpoints periodically and reports response times
+- **Service Health Checks**: Verifies both LLM and ML services are running properly
+- **Resource Tracking**: Monitors CPU and memory usage
+- **Process Monitoring**: Checks if all required processes are running
+- **Error Logging**: Records errors for troubleshooting
+
+### Running the Monitor
+
+1. Make sure the monitoring script is executable:
+   ```bash
+   chmod +x monitor.py
+   chmod +x monitor_wrapper.sh
+   ```
+
+2. Start the monitor:
+   
+   **Interactive Mode** (shows real-time dashboard):
+   ```bash
+   ./monitor.py
+   ```
+   
+   **Background Mode** (runs in the background):
+   ```bash
+   ./monitor_wrapper.sh start
+   ```
+
+3. Managing the monitor in background mode:
+   ```bash
+   # Check monitor status
+   ./monitor_wrapper.sh status
+   
+   # Stop the monitor
+   ./monitor_wrapper.sh stop
+   
+   # Restart the monitor
+   ./monitor_wrapper.sh restart
+   ```
+
+4. Optional command-line arguments:
+   ```bash
+   # Monitor with a custom interval (in seconds)
+   ./monitor.py --interval=30
+   # or in background mode:
+   ./monitor_wrapper.sh start --interval=30
+   
+   # Monitor specific service URLs
+   ./monitor.py --llm-url=https://your-llm-service-url.ngrok-free.app --ml-url=https://your-ml-models-url.ngrok-free.app
+   
+   # Save logs to a file
+   ./monitor.py --log-file=monitor.log
+   ```
+
+5. Logs for the background monitor are automatically saved to the `logs/` directory.
+
+6. To exit the interactive monitor, press `Ctrl+C`.
+
+### Interpreting the Dashboard
+
+The dashboard shows:
+
+- **Services Status**: Online/offline status of each service with response times
+- **System Resources**: CPU and memory usage percentages
+- **Processes**: Status of critical processes (main.py and models.py)
+- **LLM Endpoints**: Status and performance of all LLM service endpoints
+- **ML Endpoints**: Status and performance of all ML Models service endpoints
+
+Red indicators show problems that need attention, while green indicates healthy operation.
+
+### Alert Configuration
+
+The monitoring system includes a configurable alerting system that can notify you when services are unhealthy or performance thresholds are exceeded.
+
+1. Configure alerts by editing `alert_config.json`:
+   ```json
+   {
+     "alerts": {
+       "service_down": {
+         "enabled": true,
+         "threshold": 3,
+         "cooldown_minutes": 10
+       },
+       "high_latency": {
+         "enabled": true,
+         "threshold_ms": 2000,
+         "consecutive_violations": 3
+       }
+       // ... more alert types
+     },
+     "notification_channels": {
+       "console": { "enabled": true },
+       "log_file": { 
+         "enabled": true,
+         "path": "logs/alerts.log"
+       },
+       "email": { "enabled": false },
+       "slack": { "enabled": false }
+     }
+   }
+   ```
+
+2. Available alert types:
+   - **service_down**: Triggers when a service goes down
+   - **high_latency**: Triggers when endpoint response times exceed threshold
+   - **resource_usage**: Triggers when CPU or memory usage exceeds threshold
+   - **process_missing**: Triggers when a critical process is not running
+
+3. Available notification channels:
+   - **console**: Displays alerts in the console
+   - **log_file**: Writes alerts to a log file
+   - **email**: Sends email notifications (requires configuration)
+   - **slack**: Sends Slack notifications (requires webhook URL)
+
+4. To enable email or Slack notifications, update their configurations in `alert_config.json` and set `enabled` to `true`.
 
 ## Contributing
 
