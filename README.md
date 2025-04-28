@@ -5,15 +5,14 @@ This repository contains the backend code for Cerebrum AI's LLM-powered multimod
 ## System Components
 
 The system consists of two main components:
-1. **Main Application**: Handles LLM processing, vector database lookups, and coordinates multimodal inputs
-2. **Models Service**: Provides audio emotion analysis functionality
+1. **Main Application (main.py)**: Handles LLM processing, vector database lookups, and coordinates multimodal inputs
+2. **Models Service (models.py)**: Provides machine learning capabilities including audio emotion analysis and keystroke pattern analysis
 
 ## Prerequisites
 
 - Python 3.9+ (3.13 recommended)
-- Conda environment manager
+- Conda environment manager (recommended)
 - GGUF format LLM models (Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf)
-- Audio dataset for emotion recognition (if retraining models)
 - Minimum 16GB RAM (32GB recommended for optimal performance)
 - At least 10GB free disk space
 
@@ -36,8 +35,17 @@ The system consists of two main components:
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
-   pip install llama-cpp-python
    ```
+
+4. Install the LLama-cpp-python library with specific optimizations:
+   - For Mac with Metal support:
+     ```bash
+     CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
+     ```
+   - For Windows with CUDA support:
+     ```bash
+     CMAKE_ARGS="-DGGML_CUDA=on -DGGML_CUDA_FORCE_CUBLAS=on -DLLAVA_BUILD=off -DCMAKE_CUDA_ARCHITECTURES=native" FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
+     ```
 
 ### 2. Model Setup
 
@@ -71,26 +79,7 @@ ML_MODELS_URL=http://localhost:9000
 - The NODE_HANDLER_URL should be provided by your system administrator
 - The ML_MODELS_URL should be set to wherever your Models Service will run (default is localhost:9000)
 
-### 4. Audio Emotion Analysis Setup
-
-The audio emotion analysis model is pre-trained and available in the repository as `models/audio/emotion/audio_emotion_model.pkl`. If you need to retrain it:
-
-1. Prepare your audio data:
-   - Place WAV files in `models/audio/emotion/data/` directory
-   - Files should be organized by emotion (e.g., "happy", "sad", "angry", "neutral", "fear")
-
-2. Run the training script:
-   ```bash
-   cd models/audio/emotion
-   python convert_wavs.py  # Convert audio files to the right format if needed
-   ```
-
-3. Test the audio analyzer:
-   ```bash
-   python test_audio_analyzer.py
-   ```
-
-### 5. Memory Optimization
+### 4. Memory Optimization
 
 For optimal performance on machines with limited RAM:
 
@@ -109,15 +98,19 @@ For optimal performance on machines with limited RAM:
    export GGML_METAL_NDEBUG=1
    ```
 
-### 6. Starting the System
+### 5. Starting the System
 
-1. Start the Models Service (for audio processing):
+1. Start the Models Service:
    ```bash
    conda activate aventus
-   cd models
-   python app.py
+   # Make sure you're in the project root directory
+   python models.py
    ```
-   This will start the Models Service on port 9000.
+   This will:
+   - Initialize all ML models
+   - Start the Flask server for ML models on port 9000
+   - Set up ngrok tunneling for remote access
+   - Register with the node handler
 
 2. In a separate terminal, start the Main Application:
    ```bash
@@ -132,27 +125,24 @@ For optimal performance on machines with limited RAM:
    - Set up ngrok tunneling
    - Register with the node handler
 
-3. Check that both services are running:
+3. Both services will display their ngrok URLs when they start up, which you can use to access them remotely.
+
+4. To run the services in the background:
    ```bash
-   # Check main app
-   curl http://localhost:5050/status
+   # Start ML models service in background
+   python models.py &
    
-   # Check models service
-   curl http://localhost:9000/status
+   # Start main application in background
+   python main.py &
    ```
 
 ## API Endpoints
 
-### 1. Status Endpoints
-
-Check the status of the Main Application:
-```bash
-curl http://localhost:5050/status
-```
+### 1. Health Check Endpoints
 
 Check the status of the Models Service:
 ```bash
-curl http://localhost:9000/status
+curl https://your-models-service-ngrok-url.ngrok-free.app/
 ```
 
 ### 2. Chat Endpoint
@@ -160,8 +150,8 @@ curl http://localhost:9000/status
 Send a text-only query:
 ```bash
 curl -X POST -H "Content-Type: application/json" \
-  -d '{"question": "What is the meaning of life?"}' \
-  http://localhost:5050/api/chat
+  -d '{"question": "What are the symptoms of diabetes?"}' \
+  https://your-llm-service-ngrok-url.ngrok-free.app/api/chat
 ```
 
 ### 3. Audio Analysis
@@ -170,22 +160,21 @@ curl -X POST -H "Content-Type: application/json" \
 ```bash
 curl -X POST -H "Content-Type: application/json" \
   -d '{"data_type": "audio", "model": "emotion", "url": "/path/to/audio.wav"}' \
-  http://localhost:9000/ml/process
+  https://your-models-service-ngrok-url.ngrok-free.app/ml/process
 ```
 
 #### Using the Main Application:
 ```bash
 curl -X POST -F "audio=@/path/to/audio.wav" \
-  http://localhost:5050/api/analyze_audio
+  https://your-llm-service-ngrok-url.ngrok-free.app/api/analyze_audio
 ```
 
-### 4. Image Analysis
+### 4. Typing Analysis
 
 ```bash
-curl -X POST \
-  -F "question=What is happening to my skin?" \
-  -F "image=https://dermnetnz.org/assets/Uploads/site-age-specific/lowerleg9.jpg" \
-  http://localhost:5050/api/chat
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"keystrokes": [{"key": "a", "timestamp": 1680000000, "event": "keydown"}, {"key": "b", "timestamp": 1680000100, "event": "keydown"}, ...]}' \
+  https://your-llm-service-ngrok-url.ngrok-free.app/api/analyze_typing
 ```
 
 ### 5. Multimodal Analysis
@@ -194,21 +183,9 @@ Send text, image, and audio in one request:
 ```bash
 curl -X POST \
   -F "question=I have a skin problem and I feel angry about it" \
-  -F "image=https://dermnetnz.org/assets/Uploads/site-age-specific/lowerleg9.jpg" \
+  -F "image=@/path/to/image.jpg" \
   -F "audio=@/path/to/audio.wav" \
-  http://localhost:5050/api/chat
-```
-
-## Using the ngrok URL
-
-If you want to access the API remotely, you can use the ngrok URL that's generated when you start the Main Application. Replace `localhost:5050` with the ngrok URL in any of the commands above.
-
-Example:
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is the meaning of life?"}' \
-  https://your-ngrok-url.ngrok-free.app/api/chat
+  https://your-llm-service-ngrok-url.ngrok-free.app/api/chat
 ```
 
 ## Troubleshooting
@@ -216,56 +193,58 @@ curl -X POST \
 ### Common Issues
 
 1. **LLM Initialization Failure**: 
-   - Ensure you have installed llama-cpp-python: `pip install llama-cpp-python`
+   - Ensure you have installed llama-cpp-python with the correct optimizations
    - Verify the model paths in `singleton.py`
-   - If you see `No module named 'llama_cpp'` error, reinstall with: `pip uninstall llama-cpp-python && pip install llama-cpp-python`
+   - If you see `No module named 'llama_cpp'` error, reinstall with the correct CMAKE_ARGS
 
 2. **Audio Processing Errors**:
-   - Make sure the Models Service is running on port 9000
+   - Make sure the Models Service is running
    - Ensure the `ML_MODELS_URL` environment variable is set correctly
    - Check that audio files are in WAV format
-   - For errors like "Failed to extract features", ensure your WAV file has a valid sample rate (8000Hz-48000Hz)
 
 3. **Ngrok Errors**:
    - Verify your ngrok auth tokens are valid
    - If you see "Ngrok session limit reached", either wait for sessions to expire or use another token
-   - When switching ngrok tokens, restart the main application
+   - When switching ngrok tokens, restart the services
 
-4. **Memory Issues**:
-   - If you see `Insufficient Memory (kIOGPUCommandBufferCallbackErrorOutOfMemory)` errors:
-     - Reduce the model context size in `singleton.py`
-     - Close other applications that use GPU/RAM
-     - Consider using a smaller model variant
-   - If the application is slow, add more RAM or reduce the size of your embeddings database
+4. **"Connection refused" errors**:
+   - Check that both services are running
+   - Verify that the ML_MODELS_URL is correctly set in your .env file
+   - Ensure the ports (5050 for main, 9000 for models) are not being used by other applications
 
-5. **"python-dotenv could not parse statement" warnings**:
-   - These are usually benign and can be ignored
-   - If they bother you, check your .env file for proper formatting
-
-6. **Vector DB Loading Errors**:
+5. **Vector DB Loading Errors**:
    - If Chroma DB fails to load, re-run the `setup.ipynb` notebook
    - Make sure the `chroma_langchain_db` directory has proper permissions
+
+### Testing Endpoints
+
+Use the included `test_endpoints.py` script to verify all endpoints are working:
+
+```bash
+python test_endpoints.py <llm-service-url> <ml-models-url>
+```
+
+For example:
+```bash
+python test_endpoints.py https://c061-104-28-219-95.ngrok-free.app https://4f76-104-28-219-94.ngrok-free.app
+```
 
 ### Emergency Restart
 
 If the system becomes unresponsive:
 
-1. Kill all Python processes:
+1. Kill the Python processes:
    ```bash
-   pkill -f "python"
+   pkill -f "python models.py"
+   pkill -f "python main.py"
    ```
 
-2. Check for any zombie ngrok processes:
+2. Check for any remaining processes:
    ```bash
-   ps aux | grep ngrok
+   ps aux | grep python
    ```
 
-3. Kill any remaining ngrok processes:
-   ```bash
-   pkill -f "ngrok"
-   ```
-
-4. Restart both services as described in the "Starting the System" section
+3. Restart both services as described in the "Starting the System" section
 
 ## Additional Information
 
