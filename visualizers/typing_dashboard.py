@@ -6,6 +6,9 @@ This script provides a dashboard for analyzing typing patterns and visualizing
 the results from the ML service.
 """
 
+import dash
+from dash import dcc, html, callback, Input, Output, State
+import dash_bootstrap_components as dbc
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,6 +18,8 @@ import json
 import os
 import sys
 import time
+import glob
+import requests
 from datetime import datetime
 
 # Add parent directory to path for imports
@@ -467,7 +472,7 @@ def update_feature_graphs(data):
     
     return feature_fig, prob_fig, results_elements
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     print("Starting Cerebrum AI Typing Analysis Dashboard...")
     print("Dashboard available at: http://127.0.0.1:8050/")
-    app.run_server(debug=True) 
+    app.run(debug=True) 
