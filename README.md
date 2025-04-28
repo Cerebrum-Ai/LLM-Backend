@@ -1,22 +1,36 @@
 # Cerebrum AI LLM Backend
 
-This repository contains the backend code for Cerebrum AI's LLM-powered multimodal health analysis system.
+This repository contains the backend code for Cerebrum AI's LLM-powered multimodal health analysis system, which integrates large language models with specialized machine learning models for health assessment.
 
-## System Components
+## System Overview
 
-The system consists of two main components:
-1. **Main Application (main.py)**: Handles LLM processing, vector database lookups, and coordinates multimodal inputs
-2. **Models Service (models.py)**: Provides machine learning capabilities including audio emotion analysis and keystroke pattern analysis
+The system consists of two main components that work together:
+
+1. **Main LLM Service (main.py)**: 
+   - Handles large language model processing
+   - Provides vector database lookups for medical knowledge
+   - Coordinates multimodal inputs (text, audio, typing patterns)
+   - Routes ML analysis requests to the Models Service
+   - Provides a comprehensive API for health analysis
+
+2. **ML Models Service (models.py)**:
+   - Provides specialized machine learning capabilities
+   - Currently includes:
+     - Audio emotion analysis model
+     - Keystroke pattern analysis for neurological screening
 
 ## Prerequisites
 
 - Python 3.9+ (3.13 recommended)
 - Conda environment manager (recommended)
-- GGUF format LLM models (Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf)
+- GGUF format LLM models:
+  - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (for medical analysis)
+  - `phi-2.Q5_K_M.gguf` (for general text processing)
 - Minimum 16GB RAM (32GB recommended for optimal performance)
 - At least 10GB free disk space
+- FFmpeg installed (for audio processing)
 
-## Comprehensive Setup Guide
+## Complete Setup Guide
 
 ### 1. Clone and Environment Setup
 
@@ -32,7 +46,7 @@ The system consists of two main components:
    conda activate aventus
    ```
 
-3. Install dependencies:
+3. Install basic dependencies:
    ```bash
    pip install -r requirements.txt
    ```
@@ -47,146 +61,425 @@ The system consists of two main components:
      CMAKE_ARGS="-DGGML_CUDA=on -DGGML_CUDA_FORCE_CUBLAS=on -DLLAVA_BUILD=off -DCMAKE_CUDA_ARCHITECTURES=native" FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
      ```
 
+5. Install ngrok:
+   ```bash
+   pip install ngrok
+   ```
+
 ### 2. Model Setup
 
-1. Download the required LLM models:
-   - If the models are not already present, you'll need to download:
-     - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (for medical analysis)
-     - `phi-2.Q5_K_M.gguf` (for general text processing)
-   - Place them in the root directory of the project
+1. Download the required LLM models and place them in the project root:
+   - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (~7.4GB)
+   - `phi-2.Q5_K_M.gguf` (~2.2GB)
 
-2. Initialize the vector database and LLM models using the setup notebook:
+   You can download these from Hugging Face or other model repositories.
+
+2. Initialize the vector database:
    ```bash
    jupyter notebook setup.ipynb
    ```
-
-3. Inside the notebook:
-   - Run all cells to set up the vector database
-   - This will process the medical data, create embeddings, and store them in `medical_data_embeddings.pkl`
-   - It will also verify that the LLM models are working correctly
+   Run all cells to:
+   - Process the medical data from `medical_data.csv`
+   - Create embeddings stored in `medical_data_embeddings.pkl`
+   - Verify LLM models are working correctly
 
 ### 3. Environment Variables
 
 Create a `.env` file in the project root with the following variables:
 
 ```
+# Ngrok auth tokens for creating public tunnel URLs
 NGROK_AUTH_TOKENS=your_ngrok_auth_token1,your_ngrok_auth_token2
+
+# URL of the node handler service
 NODE_HANDLER_URL=https://your-node-handler.ngrok-free.app
+
+# URL of the ML Models service
 ML_MODELS_URL=http://localhost:9000
+
+# Optional: Port for the Main LLM service (default is 5050)
+MAIN_PORT=5050
 ```
 
-- If you need ngrok auth tokens, sign up at [ngrok.com](https://ngrok.com)
-- The NODE_HANDLER_URL should be provided by your system administrator
-- The ML_MODELS_URL should be set to wherever your Models Service will run (default is localhost:9000)
+You can use the `env_example` file as a template:
+```bash
+cp env_example .env
+```
 
-### 4. Memory Optimization
+Then edit the `.env` file to add your specific tokens and URLs.
 
-For optimal performance on machines with limited RAM:
+### 4. Starting the System
 
-1. Adjust model context size in `singleton.py`:
-   ```python
-   # Reduce n_ctx for lower memory usage (default is 2048)
-   n_ctx=1024  # Reduces memory usage but may affect model performance
-   ```
+We've included convenience scripts to start and stop the services:
 
-2. Close other memory-intensive applications before running the system
-
-3. If you encounter `Insufficient Memory` errors, try:
+1. Make the scripts executable:
    ```bash
-   # Add these environment variables before running the application
-   export GGML_METAL_PATH_RESOURCES=.
-   export GGML_METAL_NDEBUG=1
+   chmod +x start_services.sh stop_services.sh
    ```
 
-### 5. Starting the System
+2. Start both services with a single command:
+   ```bash
+   ./start_services.sh
+   ```
 
-1. Start the Models Service:
+   This will:
+   - Start the ML Models Service in the background
+   - Wait for it to initialize
+   - Start the Main LLM Service in the background
+   - Display the ngrok URLs for both services
+
+3. To stop all services:
+   ```bash
+   ./stop_services.sh
+   ```
+
+### 5. Alternative: Manual Startup
+
+If you prefer to start the services manually:
+
+1. Start the ML Models Service:
    ```bash
    conda activate aventus
-   # Make sure you're in the project root directory
    python models.py
    ```
-   This will:
-   - Initialize all ML models
-   - Start the Flask server for ML models on port 9000
-   - Set up ngrok tunneling for remote access
-   - Register with the node handler
 
-2. In a separate terminal, start the Main Application:
+2. In a separate terminal, start the Main LLM Service:
    ```bash
    conda activate aventus
-   # Make sure you're in the project root directory
    python main.py
    ```
-   This will:
-   - Initialize the Vector Database
-   - Load the LLM models
-   - Start the Flask server on port 5050
-   - Set up ngrok tunneling
-   - Register with the node handler
 
-3. Both services will display their ngrok URLs when they start up, which you can use to access them remotely.
+## Detailed Model Documentation
 
-4. To run the services in the background:
-   ```bash
-   # Start ML models service in background
-   python models.py &
-   
-   # Start main application in background
-   python main.py &
-   ```
+### 1. Large Language Models
 
-## API Endpoints
+The system uses two primary LLM models:
 
-### 1. Health Check Endpoints
+1. **Bio-Medical-MultiModal-Llama-3-8B-V1**: 
+   - Specialized for medical knowledge and diagnostics
+   - Used for the primary health analysis
+   - Processes both text and image inputs
 
-Check the status of the Models Service:
-```bash
-curl https://your-models-service-ngrok-url.ngrok-free.app/
+2. **Phi-2**:
+   - Used for general text processing
+   - Handles initial query understanding and routing
+
+### 2. Audio Emotion Analysis Model
+
+The audio emotion model analyzes voice recordings to detect emotional states:
+
+- **Implementation**: `SimpleAudioAnalyzer` class in `models/audio/emotion/audio_analyzer.py`
+- **Model File**: `audio_emotion_model.pkl`
+- **Features Analyzed**:
+  - Mel-frequency cepstral coefficients (MFCCs)
+  - Spectral features
+  - Tonal features
+  - Rhythm patterns
+- **Emotions Detected**:
+  - Happy
+  - Sad
+  - Angry
+  - Neutral
+  - Fear
+- **Input Format**: WAV audio files 
+
+### 3. Keystroke Pattern Analysis Model
+
+The keystroke pattern model analyzes typing patterns to screen for potential neurological conditions:
+
+- **Implementation**: `KeystrokeProcessor` class in `models/typing/pattern/typing_processor.py`
+- **Features Analyzed**:
+  - Key press duration
+  - Time between keystrokes
+  - Error rates and corrections
+  - Typing rhythm patterns
+  - Typing speed
+  - Pause patterns
+- **Conditions Screened**:
+  - Parkinson's disease
+  - Essential tremor
+  - Carpal tunnel syndrome
+  - Multiple sclerosis
+  - Normal typing patterns
+- **Requirements**: Minimum 10 keystrokes for analysis
+- **Input Format**: JSON keystroke data with timestamps
+
+## API Reference
+
+### Main LLM Service Endpoints
+
+#### 1. Chat Endpoint
+
+Processes natural language queries with optional multimodal inputs.
+
+**Endpoint**: `/api/chat`  
+**Method**: POST  
+**Content-Type**: `application/json` or `multipart/form-data`
+
+**JSON Request Format**:
+```json
+{
+  "question": "What are the symptoms of diabetes?",
+  "session_id": "optional_session_id",
+  "image": "optional_base64_encoded_image",
+  "audio": "optional_base64_encoded_audio",
+  "typing": {
+    "keystrokes": [
+      {"key": "a", "timeDown": 1620136589000, "timeUp": 1620136589080},
+      {"key": "b", "timeDown": 1620136589200, "timeUp": 1620136589270},
+      ...
+    ]
+  }
+}
 ```
 
-### 2. Chat Endpoint
+**Form Data Request Format**:
+```
+question: What are the symptoms of diabetes?
+image: [file upload]
+audio: [file upload]
+```
 
-Send a text-only query:
+**Response Format**:
+```json
+{
+  "status": "success",
+  "analysis": {
+    "initial_diagnosis": "Initial assessment based on query",
+    "vectordb_results": "Relevant medical data from knowledge base",
+    "final_analysis": "Comprehensive assessment including symptoms, treatments, and multimodal insights"
+  }
+}
+```
+
+**Example Curl Command**:
 ```bash
-curl -X POST -H "Content-Type: application/json" \
+curl -X POST \
+  -H "Content-Type: application/json" \
   -d '{"question": "What are the symptoms of diabetes?"}' \
   https://your-llm-service-ngrok-url.ngrok-free.app/api/chat
 ```
 
-### 3. Audio Analysis
+#### 2. Audio Analysis Endpoint
 
-#### Using the Models Service directly:
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"data_type": "audio", "model": "emotion", "url": "/path/to/audio.wav"}' \
-  https://your-models-service-ngrok-url.ngrok-free.app/ml/process
+Analyzes audio for emotional content.
+
+**Endpoint**: `/api/analyze_audio`  
+**Method**: POST  
+
+**Form Data Request Format**:
+```
+audio: [file upload]
 ```
 
-#### Using the Main Application:
+**Response Format**:
+```json
+{
+  "status": "success",
+  "analysis": {
+    "detected_emotion": "happy|sad|angry|neutral|fear",
+    "confidence": 0.85,
+    "emotions": {
+      "happy": 0.85,
+      "sad": 0.05,
+      "angry": 0.03,
+      "neutral": 0.05,
+      "fear": 0.02
+    }
+  }
+}
+```
+
+**Example Curl Command**:
 ```bash
-curl -X POST -F "audio=@/path/to/audio.wav" \
+curl -X POST \
+  -F "audio=@/path/to/audio.wav" \
   https://your-llm-service-ngrok-url.ngrok-free.app/api/analyze_audio
 ```
 
-### 4. Typing Analysis
+#### 3. Typing Analysis Endpoint
 
+Analyzes keystroke patterns for potential neurological conditions.
+
+**Endpoint**: `/api/analyze_typing`  
+**Method**: POST  
+**Content-Type**: `application/json`
+
+**Request Format**:
+```json
+{
+  "keystrokes": [
+    {"key": "a", "timeDown": 1620136589000, "timeUp": 1620136589080},
+    {"key": "b", "timeDown": 1620136589200, "timeUp": 1620136589270},
+    ...
+  ]
+}
+```
+
+**Response Format**:
+```json
+{
+  "status": "success",
+  "analysis": {
+    "detected_condition": "parkinsons|essential_tremor|carpal_tunnel|multiple_sclerosis|normal",
+    "probabilities": {
+      "parkinsons": 0.15,
+      "essential_tremor": 0.05,
+      "carpal_tunnel": 0.75,
+      "multiple_sclerosis": 0.03,
+      "normal": 0.02
+    },
+    "features": {
+      "key_press_duration": 130.5,
+      "duration_variability": 25.3,
+      "time_between_keys": 200.7,
+      "rhythm_variability": 50.2,
+      "error_rate": 0.03,
+      "typing_speed": 240.5,
+      "rhythm_consistency": 0.85,
+      "pause_frequency": 4.2
+    }
+  }
+}
+```
+
+**Example Curl Command**:
 ```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"keystrokes": [{"key": "a", "timestamp": 1680000000, "event": "keydown"}, {"key": "b", "timestamp": 1680000100, "event": "keydown"}, ...]}' \
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"keystrokes": [{"key": "a", "timeDown": 1620136589000, "timeUp": 1620136589080}, {"key": "b", "timeDown": 1620136589200, "timeUp": 1620136589270}]}' \
   https://your-llm-service-ngrok-url.ngrok-free.app/api/analyze_typing
 ```
 
-### 5. Multimodal Analysis
+### ML Models Service Endpoints
 
-Send text, image, and audio in one request:
+#### 1. Health Check Endpoint
+
+**Endpoint**: `/`  
+**Method**: GET  
+
+**Response Format**:
+```json
+{
+  "status": "ok",
+  "service": "ml_models",
+  "message": "ML models service is running"
+}
+```
+
+**Example Curl Command**:
+```bash
+curl https://your-models-service-ngrok-url.ngrok-free.app/
+```
+
+#### 2. ML Process Endpoint
+
+Generic endpoint for all machine learning models.
+
+**Endpoint**: `/ml/process`  
+**Method**: POST  
+**Content-Type**: `application/json`
+
+**Request Format**:
+```json
+{
+  "url": "path_to_data_or_json_string",
+  "data_type": "audio|typing",
+  "model": "emotion|pattern"
+}
+```
+
+**Response Format** (for audio/emotion):
+```json
+{
+  "detected_emotion": "happy|sad|angry|neutral|fear",
+  "confidence": 0.85,
+  "emotions": {
+    "happy": 0.85,
+    "sad": 0.05,
+    "angry": 0.03,
+    "neutral": 0.05,
+    "fear": 0.02
+  }
+}
+```
+
+**Response Format** (for typing/pattern):
+```json
+{
+  "detected_condition": "parkinsons|essential_tremor|carpal_tunnel|multiple_sclerosis|normal",
+  "probabilities": {
+    "parkinsons": 0.15,
+    "essential_tremor": 0.05,
+    "carpal_tunnel": 0.75,
+    "multiple_sclerosis": 0.03,
+    "normal": 0.02
+  },
+  "features": {
+    "key_press_duration": 130.5,
+    "typing_speed": 240.5,
+    "rhythm_consistency": 0.85
+  }
+}
+```
+
+**Example Curl Commands**:
+
+For audio analysis:
 ```bash
 curl -X POST \
-  -F "question=I have a skin problem and I feel angry about it" \
-  -F "image=@/path/to/image.jpg" \
-  -F "audio=@/path/to/audio.wav" \
-  https://your-llm-service-ngrok-url.ngrok-free.app/api/chat
+  -H "Content-Type: application/json" \
+  -d '{"url": "/path/to/audio.wav", "data_type": "audio", "model": "emotion"}' \
+  https://your-models-service-ngrok-url.ngrok-free.app/ml/process
 ```
+
+For typing pattern analysis:
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"url": "{\"keystrokes\": [{\"key\": \"a\", \"timeDown\": 1620136589000, \"timeUp\": 1620136589080}, {\"key\": \"b\", \"timeDown\": 1620136589200, \"timeUp\": 1620136589270}]}", "data_type": "typing", "model": "pattern"}' \
+  https://your-models-service-ngrok-url.ngrok-free.app/ml/process
+```
+
+## Testing
+
+### Automatic Testing
+
+We've included a comprehensive test script that verifies all endpoints:
+
+```bash
+python test_endpoints.py <llm-service-url> <ml-models-url>
+```
+
+Example:
+```bash
+python test_endpoints.py https://c061-104-28-219-95.ngrok-free.app https://4f76-104-28-219-94.ngrok-free.app
+```
+
+This will:
+- Test the health of both services
+- Test the chat endpoint with a medical query
+- Test the typing analysis endpoint
+- Test the ML models process endpoint directly
+
+### Manual Testing
+
+You can also manually test each endpoint using the curl commands provided in the API Reference section.
+
+## Memory Management
+
+For systems with limited RAM:
+
+1. Adjust model context size in `singleton.py`:
+   ```python
+   n_ctx=1024  # Reduces memory usage but may affect model performance
+   ```
+
+2. Set environment variables before running:
+   ```bash
+   export GGML_METAL_PATH_RESOURCES=.
+   export GGML_METAL_NDEBUG=1
+   ```
 
 ## Troubleshooting
 
@@ -195,57 +488,77 @@ curl -X POST \
 1. **LLM Initialization Failure**: 
    - Ensure you have installed llama-cpp-python with the correct optimizations
    - Verify the model paths in `singleton.py`
-   - If you see `No module named 'llama_cpp'` error, reinstall with the correct CMAKE_ARGS
+   - Check that models are properly downloaded
 
 2. **Audio Processing Errors**:
-   - Make sure the Models Service is running
-   - Ensure the `ML_MODELS_URL` environment variable is set correctly
-   - Check that audio files are in WAV format
+   - Make sure FFmpeg is installed: `brew install ffmpeg` (Mac) or `apt install ffmpeg` (Linux)
+   - Ensure audio files are in WAV format with valid sample rates
 
-3. **Ngrok Errors**:
-   - Verify your ngrok auth tokens are valid
-   - If you see "Ngrok session limit reached", either wait for sessions to expire or use another token
-   - When switching ngrok tokens, restart the services
+3. **"Connection refused" errors**:
+   - Verify both services are running
+   - Check ML_MODELS_URL in .env matches the actual port (default: 9000)
+   - Ensure ports aren't being used by other applications
 
-4. **"Connection refused" errors**:
-   - Check that both services are running
-   - Verify that the ML_MODELS_URL is correctly set in your .env file
-   - Ensure the ports (5050 for main, 9000 for models) are not being used by other applications
+4. **Ngrok Issues**:
+   - Verify ngrok auth tokens are valid
+   - Install ngrok if missing: `pip install ngrok`
+   - Check for multiple tokens in .env if you see "session limit reached" errors
 
-5. **Vector DB Loading Errors**:
-   - If Chroma DB fails to load, re-run the `setup.ipynb` notebook
-   - Make sure the `chroma_langchain_db` directory has proper permissions
+5. **Vector DB Issues**:
+   - Re-run `setup.ipynb` notebook cells if database doesn't load
+   - Check permissions on the `chroma_langchain_db` directory
 
-### Testing Endpoints
+### Logs and Debugging
 
-Use the included `test_endpoints.py` script to verify all endpoints are working:
+The services output logs to the console. To capture logs in files:
 
 ```bash
-python test_endpoints.py <llm-service-url> <ml-models-url>
-```
-
-For example:
-```bash
-python test_endpoints.py https://c061-104-28-219-95.ngrok-free.app https://4f76-104-28-219-94.ngrok-free.app
+python models.py > models.log 2>&1 &
+python main.py > main.log 2>&1 &
 ```
 
 ### Emergency Restart
 
-If the system becomes unresponsive:
+If services become unresponsive:
 
-1. Kill the Python processes:
-   ```bash
-   pkill -f "python models.py"
-   pkill -f "python main.py"
-   ```
+```bash
+./stop_services.sh
+./start_services.sh
+```
 
-2. Check for any remaining processes:
-   ```bash
-   ps aux | grep python
-   ```
+Or manually:
 
-3. Restart both services as described in the "Starting the System" section
+```bash
+pkill -f "python models.py"
+pkill -f "python main.py"
+```
 
-## Additional Information
+## File Structure
 
-For detailed information about the codebase organization and architecture, please refer to the project documentation or contact the development team. 
+```
+LLM-Backend/
+├── main.py                   # Main LLM service
+├── models.py                 # ML Models service
+├── singleton.py              # LLM initialization code
+├── utils.py                  # Utility functions
+├── requirements.txt          # Core dependencies
+├── test_endpoints.py         # Endpoint testing script
+├── start_services.sh         # Service starter script
+├── stop_services.sh          # Service stopper script
+├── env_example               # Example .env file
+├── models/                   # ML model implementations
+│   ├── audio/                # Audio analysis models
+│   │   └── emotion/          # Emotion detection
+│   └── typing/               # Typing analysis models
+│       └── pattern/          # Pattern detection
+├── Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf  # Medical LLM model
+└── phi-2.Q5_K_M.gguf         # General purpose LLM model
+```
+
+## Contributing
+
+Please refer to the development team for contribution guidelines.
+
+## License
+
+Proprietary - All rights reserved. 
