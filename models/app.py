@@ -9,7 +9,7 @@ from audio.emotion.audio_processor import SimpleAudioAnalyzer
 app = Flask(__name__)
 audio_analyzer = SimpleAudioAnalyzer.get_instance()
 
-@app.route('/status', methods=['GET'])
+@app.route('/status', methods=['GET']) 
 def status():
     return jsonify({"status": "ok"})
 
@@ -44,3 +44,5 @@ def process_ml():
 if __name__ == "__main__":
     print("Starting ML Models Service on port 9000...")
     app.run(host="0.0.0.0", port=9000) 
+
+
