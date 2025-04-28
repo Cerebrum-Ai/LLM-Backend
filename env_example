@@ -1,0 +1,21 @@
+# Cerebrum AI LLM Backend - Environment Configuration
+# Rename this file to .env and update the values as needed
+
+# Ngrok authentication tokens for creating public tunnel URLs
+# Multiple tokens can be provided, separated by commas
+NGROK_AUTH_TOKENS=your_ngrok_auth_token1,your_ngrok_auth_token2
+
+# URL of the node handler service
+NODE_HANDLER_URL=https://your-node-handler.ngrok-free.app
+
+# URL of the ML Models service (default is localhost:9000)
+ML_MODELS_URL=http://localhost:9000
+
+# Port for the Main LLM service (default is 5050)
+MAIN_PORT=5050
+
+# Optional: Debug mode (set to True for more verbose logging)
+# DEBUG=True
+
+# Optional: Model configuration
+# MODEL_CONTEXT_SIZE=1024  # Reduce for lower memory usage 
