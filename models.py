@@ -11,9 +11,11 @@ from waitress import serve
 import tempfile
 import base64
 import subprocess
+from pathlib import Path
 
 # Import ML models - audio processing is just one of potentially many ML types
-sys.path.append(os.path.join(os.path.dirname(__file__), 'models/audio/emotion'))
+audio_processor_path = os.path.join(os.path.dirname(__file__), 'models', 'audio', 'emotion')
+sys.path.append(audio_processor_path)
 from audio_processor import SimpleAudioAnalyzer
 
 load_dotenv()
@@ -405,3 +407,5 @@ if __name__ == '__main__':
     ngrok_thread.start()
     while not shutdown_event.is_set():
         time.sleep(1)
+
+        
