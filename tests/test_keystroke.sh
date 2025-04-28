@@ -5,6 +5,9 @@
 LLM_URL="http://localhost:5050"
 
 echo "Testing Cerebrum AI Keystroke Analysis API..."
+echo "Note: Run this script from the project root directory"
+echo
+
 echo "Sending request to ${LLM_URL}/api/analyze_typing"
 
 curl -X POST "${LLM_URL}/api/analyze_typing" \

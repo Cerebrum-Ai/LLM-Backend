@@ -1,0 +1,82 @@
+{
+  "alerts": {
+    "service_down": {
+      "enabled": true,
+      "description": "Alert when a service goes down",
+      "threshold": 3,
+      "cooldown_minutes": 10
+    },
+    "high_latency": {
+      "enabled": true,
+      "description": "Alert when endpoint response time exceeds threshold",
+      "threshold_ms": 2000,
+      "consecutive_violations": 3,
+      "cooldown_minutes": 5
+    },
+    "resource_usage": {
+      "enabled": true,
+      "description": "Alert when system resources exceed threshold",
+      "cpu_threshold_percent": 80,
+      "memory_threshold_percent": 90,
+      "consecutive_violations": 3,
+      "cooldown_minutes": 15
+    },
+    "process_missing": {
+      "enabled": true,
+      "description": "Alert when a critical process is not running",
+      "processes": ["main.py", "models.py"],
+      "cooldown_minutes": 5
+    }
+  },
+  "notification_channels": {
+    "console": {
+      "enabled": true
+    },
+    "log_file": {
+      "enabled": true,
+      "path": "logs/alerts.log"
+    },
+    "email": {
+      "enabled": false,
+      "recipients": ["admin@example.com"],
+      "smtp_server": "smtp.example.com",
+      "smtp_port": 587,
+      "username": "alerts@example.com",
+      "password": "your_password_here",
+      "from_address": "alerts@example.com"
+    },
+    "slack": {
+      "enabled": false,
+      "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    }
+  },
+  "monitoring": {
+    "interval_seconds": 60,
+    "endpoints": {
+      "llm_chat": {
+        "timeout_seconds": 10,
+        "expected_status_code": 200,
+        "test_payload": {
+          "question": "What is a test query?",
+          "session_id": "monitor_test"
+        }
+      },
+      "llm_typing_analysis": {
+        "timeout_seconds": 10,
+        "expected_status_code": 200
+      },
+      "llm_audio_analysis": {
+        "timeout_seconds": 5,
+        "expected_status_code": 200
+      },
+      "ml_process": {
+        "timeout_seconds": 10,
+        "expected_status_code": [200, 400]
+      },
+      "ml_audio_emotion": {
+        "timeout_seconds": 5,
+        "expected_status_code": [200, 400]
+      }
+    }
+  }
+} 
