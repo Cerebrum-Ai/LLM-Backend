@@ -9,7 +9,6 @@ the results from the ML service.
 import dash
 from dash import dcc, html, callback, Input, Output, State
 import dash_bootstrap_components as dbc
-import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -21,6 +20,9 @@ import time
 import glob
 import requests
 from datetime import datetime
+from pynput import keyboard
+import threading
+from collections import defaultdict
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +30,64 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Constants
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 ML_SERVICE_URL = "http://localhost:9000"
+
+# Global variables for keyboard monitoring
+is_collecting = False
+current_keystrokes = []
+keystroke_lock = threading.Lock()
+keyboard_listener = None
+
+def on_press(key):
+    """Handle key press events"""
+    global current_keystrokes, is_collecting
+    
+    if not is_collecting:
+        return
+        
+    try:
+        key_char = key.char if hasattr(key, 'char') else str(key)
+    except AttributeError:
+        key_char = str(key)
+        
+    with keystroke_lock:
+        current_keystrokes.append({
+            "key": key_char,
+            "timeDown": int(time.time() * 1000),
+            "timeUp": None,
+            "pressure": 1.0  # Placeholder for pressure
+        })
+
+def on_release(key):
+    """Handle key release events"""
+    global current_keystrokes, is_collecting
+    
+    if not is_collecting:
+        return
+        
+    try:
+        key_char = key.char if hasattr(key, 'char') else str(key)
+    except AttributeError:
+        key_char = str(key)
+        
+    with keystroke_lock:
+        # Find the matching keydown event
+        for stroke in reversed(current_keystrokes):
+            if stroke["key"] == key_char and stroke["timeUp"] is None:
+                stroke["timeUp"] = int(time.time() * 1000)
+                break
+
+def start_keyboard_monitoring():
+    """Start monitoring keyboard events"""
+    global keyboard_listener
+    keyboard_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    keyboard_listener.start()
+
+def stop_keyboard_monitoring():
+    """Stop monitoring keyboard events"""
+    global keyboard_listener
+    if keyboard_listener:
+        keyboard_listener.stop()
+        keyboard_listener = None
 
 def load_typing_data():
     """Load all typing data files from the data directory"""
@@ -472,7 +532,84 @@ def update_feature_graphs(data):
     
     return feature_fig, prob_fig, results_elements
 
+# Add new callbacks for live data collection
+@callback(
+    [Output("stop-collecting-btn", "disabled"),
+     Output("start-collecting-btn", "disabled"),
+     Output("collection-status", "children")],
+    [Input("start-collecting-btn", "n_clicks"),
+     Input("stop-collecting-btn", "n_clicks"),
+     Input("collection-interval", "n_intervals")],
+    [State("subject-name", "value")]
+)
+def handle_data_collection(start_clicks, stop_clicks, n_intervals, subject_name):
+    global is_collecting, current_keystrokes
+    
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return True, False, ""
+    
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    
+    if button_id == "start-collecting-btn" and start_clicks:
+        if not subject_name:
+            return True, False, html.P("Please enter a subject name", className="text-danger")
+        
+        is_collecting = True
+        with keystroke_lock:
+            current_keystrokes = []
+        start_keyboard_monitoring()
+        return False, True, html.P("Recording keystrokes...", className="text-success")
+    
+    elif button_id == "stop-collecting-btn" and stop_clicks:
+        is_collecting = False
+        stop_keyboard_monitoring()
+        
+        # Save the collected data
+        if current_keystrokes:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"typing_data_{subject_name}_{timestamp}.json"
+            
+            if not os.path.exists(DATA_DIR):
+                os.makedirs(DATA_DIR)
+                
+            filepath = os.path.join(DATA_DIR, filename)
+            with open(filepath, 'w') as f:
+                json.dump({
+                    "subject": subject_name,
+                    "timestamp": timestamp,
+                    "keystrokes": current_keystrokes
+                }, f, indent=2)
+            
+            return True, False, html.P(f"Data saved to {filename}", className="text-success")
+        
+        return True, False, html.P("No data collected", className="text-warning")
+    
+    elif button_id == "collection-interval" and is_collecting:
+        return False, True, html.P(f"Recording... ({len(current_keystrokes)} keystrokes)", className="text-success")
+    
+    return True, False, ""
+
+@callback(
+    Output("collection-interval", "disabled"),
+    Input("start-collecting-btn", "n_clicks"),
+    Input("stop-collecting-btn", "n_clicks")
+)
+def toggle_interval(start_clicks, stop_clicks):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return True
+    
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    return button_id != "start-collecting-btn"
+
 if __name__ == '__main__':
     print("Starting Cerebrum AI Typing Analysis Dashboard...")
     print("Dashboard available at: http://127.0.0.1:8050/")
+    
+    # Create data directory if it doesn't exist
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+        print(f"Created data directory at {DATA_DIR}")
+    
     app.run(debug=True) 
