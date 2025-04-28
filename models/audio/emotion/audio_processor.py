@@ -2,7 +2,7 @@ import os
 import numpy as np
 import tempfile
 import base64
-from utils import extract_feature 
+from .utils import extract_feature 
 from sklearn.ensemble import RandomForestClassifier
 import joblib
 import pickle
