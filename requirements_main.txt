@@ -21,3 +21,7 @@ sounddevice
 soundfile
 librosa
 scipy
+dash==2.14.2
+dash-bootstrap-components==1.5.0
+plotly==5.18.0
+pynput==1.7.6
