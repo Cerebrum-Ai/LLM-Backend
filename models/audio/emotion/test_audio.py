@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from utils import extract_feature
+from .audio_utils import extract_feature
 
 # Create a simple function to test audio emotion extraction
 def test_audio_features():

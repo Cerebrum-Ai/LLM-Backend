@@ -18,13 +18,15 @@ The system consists of two main components that work together:
    - Currently includes:
      - Audio emotion analysis model
      - Keystroke pattern analysis for neurological screening
+     - [In progress] Image classification/analysis models for medical imaging
 
 3. **Performance Monitoring System (monitor.py)**:
-   - Monitors the health and performance of all services
-   - Tracks API endpoint response times
+   - Monitors the health and performance of all services (LLM, ML models, node handler)
+   - Tracks API endpoint response times and verifies correct payloads for each route
    - Monitors system resource usage
    - Provides a real-time dashboard
    - Logs issues and errors for troubleshooting
+   - Automatically manages service startup/shutdown and triggers alerts for endpoint failures or threshold violations
 
 ## Prerequisites
 
@@ -47,15 +49,21 @@ The system consists of two main components that work together:
    cd LLM-Backend
    ```
 
-2. Create and activate conda environment:
+2. Create and activate conda environment or using python virtual environment:
+  - Using conda:
    ```bash
-   conda create -n aventus python=3.13
+   conda create -n aventus python=3.11
    conda activate aventus
    ```
-
+  - Using python virtual environment:
+   ```bash
+   python -m venv aventus
+   source aventus/bin/activate  # On Windows use `aventus\Scripts\activate`
+   ```
+  
 3. Install basic dependencies:
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements_main.txt 
    ```
 
 4. Install the LLama-cpp-python library with specific optimizations:
@@ -63,9 +71,13 @@ The system consists of two main components that work together:
      ```bash
      CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
      ```
-   - For Windows with CUDA support:
+   - For Windows and Linux with CUDA support:
      ```bash
      CMAKE_ARGS="-DGGML_CUDA=on -DGGML_CUDA_FORCE_CUBLAS=on -DLLAVA_BUILD=off -DCMAKE_CUDA_ARCHITECTURES=native" FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
+     ```
+  - For Linux / Windows without CUDA support:
+     ```bash
+     pip install llama-cpp-python
      ```
 
 5. Install ngrok:
@@ -76,14 +88,15 @@ The system consists of two main components that work together:
 ### 2. Model Setup
 
 1. Download the required LLM models and place them in the project root:
-   - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (~7.4GB)
+   - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (~4.8GB)
+      'https://huggingface.co/TheBloke/Bio-Medical-MultiModal-Llama-3-8B-V1-Q4_K_M-GGUF/resolve/main/Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf'
    - `phi-2.Q5_K_M.gguf` (~2.2GB)
-
-   You can download these from Hugging Face or other model repositories.
+      'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q5_K_M.gguf'
+   You can download these from Hugging Face and then place in the folder created
 
 2. Initialize the vector database:
    ```bash
-   jupyter notebook setup.ipynb
+   
    ```
    Run all cells to:
    - Process the medical data from `medical_data.csv`
@@ -96,13 +109,21 @@ Create a `.env` file in the project root with the following variables:
 
 ```
 # Ngrok auth tokens for creating public tunnel URLs
-NGROK_AUTH_TOKENS=your_ngrok_auth_token1,your_ngrok_auth_token2
-
+NGROK_AUTH_TOKENS=your_ngrok_auth_token1,your_ngrok_auth_token2,....
+NGROK_AUTH_TOKENS=your_ngrok_auth_token_for_node_handler
 # URL of the node handler service
 NODE_HANDLER_URL=https://your-node-handler.ngrok-free.app
-
+NGROK_HANDLER_URL=your-node-handler.ngrok-free.app # same ad NODE_HANDLER_URL just without https
 # URL of the ML Models service
 ML_MODELS_URL=http://localhost:9000
+
+
+
+# URL for supabase
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+SUPABASE_BUCKET=your_supabase_bucket #for storing images for processing
+SUPABASE_ADMIN_KEY=your_supabase_admin_key
 
 # Optional: Port for the Main LLM service (default is 5050)
 MAIN_PORT=5050
@@ -121,21 +142,12 @@ We've included convenience scripts to start and stop the services:
 
 1. Make the scripts executable:
    ```bash
-   chmod +x start_services.sh stop_services.sh
+   cd runner
+   python monitor.py --auto-start #might show typing_service is failing but its redundant
    ```
 
-2. Start both services with a single command:
-   ```bash
-   ./start_services.sh
-   ```
-
-   This will:
-   - Start the ML Models Service in the background
-   - Wait for it to initialize
-   - Start the Main LLM Service in the background
-   - Display the ngrok URLs for both services
-
-3. To stop all services:
+2. To stop all services:
+  Close monitor.py and run
    ```bash
    ./stop_services.sh
    ```
@@ -154,6 +166,16 @@ If you prefer to start the services manually:
    ```bash
    conda activate aventus
    python main.py
+   ```
+3. In a third terminal, start the Node Handler Service:
+   ```bash
+   conda activate aventus
+   python node_handler.py
+   ```
+4. In a fourth terminal, start the Chatbot Service:
+   ```bash
+   conda activate aventus
+   python initial_chatbot.py
    ```
 
 ## Detailed Model Documentation
@@ -215,7 +237,7 @@ The keystroke pattern model analyzes typing patterns to screen for potential neu
 
 ### Main LLM Service Endpoints
 
-#### 1. Chat Endpoint
+#### 1. Chat Endpoint for LLM
 
 Processes natural language queries with optional multimodal inputs.
 
@@ -267,96 +289,6 @@ curl -X POST \
   https://your-llm-service-ngrok-url.ngrok-free.app/api/chat
 ```
 
-#### 2. Audio Analysis Endpoint
-
-Analyzes audio for emotional content.
-
-**Endpoint**: `/api/analyze_audio`  
-**Method**: POST  
-
-**Form Data Request Format**:
-```
-audio: [file upload]
-```
-
-**Response Format**:
-```json
-{
-  "status": "success",
-  "analysis": {
-    "detected_emotion": "happy|sad|angry|neutral|fear",
-    "confidence": 0.85,
-    "emotions": {
-      "happy": 0.85,
-      "sad": 0.05,
-      "angry": 0.03,
-      "neutral": 0.05,
-      "fear": 0.02
-    }
-  }
-}
-```
-
-**Example Curl Command**:
-```bash
-curl -X POST \
-  -F "audio=@/path/to/audio.wav" \
-  https://your-llm-service-ngrok-url.ngrok-free.app/api/analyze_audio
-```
-
-#### 3. Typing Analysis Endpoint
-
-Analyzes keystroke patterns for potential neurological conditions.
-
-**Endpoint**: `/api/analyze_typing`  
-**Method**: POST  
-**Content-Type**: `application/json`
-
-**Request Format**:
-```json
-{
-  "keystrokes": [
-    {"key": "a", "timeDown": 1620136589000, "timeUp": 1620136589080},
-    {"key": "b", "timeDown": 1620136589200, "timeUp": 1620136589270},
-    ...
-  ]
-}
-```
-
-**Response Format**:
-```json
-{
-  "status": "success",
-  "analysis": {
-    "detected_condition": "parkinsons|essential_tremor|carpal_tunnel|multiple_sclerosis|normal",
-    "probabilities": {
-      "parkinsons": 0.15,
-      "essential_tremor": 0.05,
-      "carpal_tunnel": 0.75,
-      "multiple_sclerosis": 0.03,
-      "normal": 0.02
-    },
-    "features": {
-      "key_press_duration": 130.5,
-      "duration_variability": 25.3,
-      "time_between_keys": 200.7,
-      "rhythm_variability": 50.2,
-      "error_rate": 0.03,
-      "typing_speed": 240.5,
-      "rhythm_consistency": 0.85,
-      "pause_frequency": 4.2
-    }
-  }
-}
-```
-
-**Example Curl Command**:
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"keystrokes": [{"key": "a", "timeDown": 1620136589000, "timeUp": 1620136589080}, {"key": "b", "timeDown": 1620136589200, "timeUp": 1620136589270}]}' \
-  https://your-llm-service-ngrok-url.ngrok-free.app/api/analyze_typing
-```
 
 ### ML Models Service Endpoints
 
@@ -381,7 +313,7 @@ curl https://your-models-service-ngrok-url.ngrok-free.app/
 
 #### 2. ML Process Endpoint
 
-Generic endpoint for all machine learning models.
+Generic endpoint for all machine learning models (audio, typing, and soon image).
 
 **Endpoint**: `/ml/process`  
 **Method**: POST  
@@ -390,13 +322,17 @@ Generic endpoint for all machine learning models.
 **Request Format**:
 ```json
 {
-  "url": "path_to_data_or_json_string",
-  "data_type": "audio|typing",
-  "model": "emotion|pattern"
+  "url": "path_to_data_or_json_string_or_base64",
+  "data_type": "audio|typing|image",
+  "model": "emotion|pattern|classification"
 }
 ```
 
-**Response Format** (for audio/emotion):
+- For audio: `url` can be a file path or downloadable URL.
+- For typing: `url` is a JSON string or object with `{"keystrokes": [...]}`.
+- For image: `url` will be a URL, file path, or base64 string (see upcoming image model section).
+
+**Response Format** (audio/emotion):
 ```json
 {
   "detected_emotion": "happy|sad|angry|neutral|fear",
@@ -411,7 +347,7 @@ Generic endpoint for all machine learning models.
 }
 ```
 
-**Response Format** (for typing/pattern):
+**Response Format** (typing/pattern):
 ```json
 {
   "detected_condition": "parkinsons|essential_tremor|carpal_tunnel|multiple_sclerosis|normal",
@@ -430,21 +366,28 @@ Generic endpoint for all machine learning models.
 }
 ```
 
-**Example Curl Commands**:
-
-For audio analysis:
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"url": "/path/to/audio.wav", "data_type": "audio", "model": "emotion"}' \
-  https://your-models-service-ngrok-url.ngrok-free.app/ml/process
+**Response Format** (image/classification, coming soon):
+```json
+{
+  "detected_condition": "covid|pneumonia|normal|other",
+  "probabilities": {
+    "covid": 0.12,
+    "pneumonia": 0.08,
+    "normal": 0.75,
+    "other": 0.05
+  },
+  "features": {
+    "area": 12345.6,
+    "confidence": 0.91
+  }
+}
 ```
 
-For typing pattern analysis:
+**Example Curl Command (image, coming soon):**
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
-  -d '{"url": "{\"keystrokes\": [{\"key\": \"a\", \"timeDown\": 1620136589000, \"timeUp\": 1620136589080}, {\"key\": \"b\", \"timeDown\": 1620136589200, \"timeUp\": 1620136589270}]}", "data_type": "typing", "model": "pattern"}' \
+  -d '{"url": "https://example.com/image.png", "data_type": "image", "model": "classification"}' \
   https://your-models-service-ngrok-url.ngrok-free.app/ml/process
 ```
 
@@ -455,12 +398,7 @@ curl -X POST \
 We've included a comprehensive test script that verifies all endpoints:
 
 ```bash
-python test_endpoints.py <llm-service-url> <ml-models-url>
-```
-
-Example:
-```bash
-python test_endpoints.py https://c061-104-28-219-95.ngrok-free.app https://4f76-104-28-219-94.ngrok-free.app
+python test_endpoints.py 
 ```
 
 This will:
@@ -538,6 +476,8 @@ Or manually:
 ```bash
 pkill -f "python models.py"
 pkill -f "python main.py"
+pkill -f "python node_handler.py"
+pkill -f "python initial_chatbot.py"
 ```
 
 ## File Structure
@@ -547,25 +487,42 @@ LLM-Backend/
 ├── main.py                   # Main LLM service
 ├── models.py                 # ML Models service
 ├── singleton.py              # LLM initialization code
-├── utils.py                  # Utility functions
 ├── requirements.txt          # Core dependencies
+├── requirements_main.txt     # Main service dependencies
 ├── test_endpoints.py         # Endpoint testing script
 ├── start_services.sh         # Service starter script
 ├── stop_services.sh          # Service stopper script
 ├── monitor.py                # Performance monitoring system
 ├── env_example               # Example .env file
-├── models/                   # ML model implementations
+├── runner/                   # Scripts and service management
+│   ├── monitor_wrapper.sh    # Monitor management script
+│   ├── start_services.sh     # Service starter script
+│   ├── stop_services.sh      # Service stopper script
+│   └── alert_config.json     # Alert configuration for monitor
+├── models/                   # ML model implementations (Python package)
+│   ├── __init__.py           # Package marker
 │   ├── audio/                # Audio analysis models
+│   │   ├── __init__.py
 │   │   └── emotion/          # Emotion detection
-│   └── typing/               # Typing analysis models
-│       └── pattern/          # Pattern detection
+│   │       ├── __init__.py
+│   │       └── audio_utils.py
+│   ├── typing/               # Typing analysis models
+│   │   ├── __init__.py
+│   │   └── pattern/          # Pattern detection
+│   │       ├── __init__.py
+│   │       └── typing_processor.py
+│   └── image/                # [In progress] Image analysis models
+│       ├── __init__.py
+│       └── classification/   # [Planned] Image classification
+│           └── __init__.py
 ├── Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf  # Medical LLM model
 └── phi-2.Q5_K_M.gguf         # General purpose LLM model
+
 ```
 
 ## Performance Monitoring
 
-The system includes a comprehensive performance monitoring tool (`monitor.py`) that provides real-time visibility into system health, API endpoint performance, and resource usage.
+The system includes a comprehensive performance monitoring tool (`monitor.py` (inside runner)) that provides real-time visibility into system health, API endpoint performance, and resource usage.
 
 ### Features
 
@@ -581,7 +538,6 @@ The system includes a comprehensive performance monitoring tool (`monitor.py`) t
 1. Make sure the monitoring script is executable:
    ```bash
    chmod +x monitor.py
-   chmod +x monitor_wrapper.sh
    ```
 
 2. Start the monitor:

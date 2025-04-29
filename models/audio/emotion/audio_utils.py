@@ -1,17 +1,12 @@
 import soundfile
 import librosa
 import numpy as np
-import pickle
 import os
 import sys
+from pathlib import Path
 
-# Ensure the current directory is in the path for imports
-module_dir = os.path.dirname(os.path.abspath(__file__))
-if module_dir not in sys.path:
-    sys.path.append(module_dir)
-    
-from convert_wavs import convert_audio
-
+# Import convert_wavs from the same directory
+from .convert_wavs import convert_audio
 
 AVAILABLE_EMOTIONS = {
     "neutral",
@@ -21,35 +16,9 @@ AVAILABLE_EMOTIONS = {
     "angry",
     "fear",
     "disgust",
-    "ps", # pleasant surprised
+    "ps",  # pleasant surprised
     "boredom"
 }
-
-
-def get_label(audio_config):
-    """Returns label corresponding to which features are to be extracted
-        e.g:
-    audio_config = {'mfcc': True, 'chroma': True, 'contrast': False, 'tonnetz': False, 'mel': False}
-    get_label(audio_config): 'mfcc-chroma'
-    """
-    features = ["mfcc", "chroma", "mel", "contrast", "tonnetz"]
-    label = ""
-    for feature in features:
-        if audio_config[feature]:
-            label += f"{feature}-"
-    return label.rstrip("-")
-
-
-def get_dropout_str(dropout, n_layers=3):
-    if isinstance(dropout, list):
-        return "_".join([ str(d) for d in dropout])
-    elif isinstance(dropout, float):
-        return "_".join([ str(dropout) for i in range(n_layers) ])
-
-
-def get_first_letters(emotions):
-    return "".join(sorted([ e[0].upper() for e in emotions ]))
-
 
 def extract_feature(file_name, **kwargs):
     """
@@ -133,29 +102,3 @@ def extract_feature(file_name, **kwargs):
     except Exception as e:
         print(f"[Error]: Failed to extract features: {str(e)}")
         return None
-
-
-def get_best_estimators(classification):
-    """
-    Loads the estimators that are pickled in `grid` folder
-    Note that if you want to use different or more estimators,
-    you can fine tune the parameters in `grid_search.py` script
-    and run it again ( may take hours )
-    """
-    if classification:
-        return pickle.load(open("grid/best_classifiers.pickle", "rb"))
-    else:
-        return pickle.load(open("grid/best_regressors.pickle", "rb"))
-
-
-def get_audio_config(features_list):
-    """
-    Converts a list of features into a dictionary understandable by
-    `data_extractor.AudioExtractor` class
-    """
-    audio_config = {'mfcc': False, 'chroma': False, 'mel': False, 'contrast': False, 'tonnetz': False}
-    for feature in features_list:
-        if feature not in audio_config:
-            raise TypeError(f"Feature passed: {feature} is not recognized.")
-        audio_config[feature] = True
-    return audio_config

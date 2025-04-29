@@ -8,7 +8,7 @@
 
 # Ensure we're in the project root directory
 cd "$(dirname "$0")"
-
+cd ..
 echo "🧠 Cerebrum AI LLM Backend Service Starter"
 echo "=========================================="
 echo
@@ -45,10 +45,23 @@ else
     echo "✅ Main LLM Service started with PID: $MAIN_PID"
 fi
 
+if pgrep -f "python initial_chatbot.py" &>/dev/null; then
+    echo "⚠️  Chatbot service is already running!"
+else
+    echo "🚀 Starting Chatbot Service..."
+    python initial_chatbot.py &
+    # Store the PID for potential later use
+    CHATBOT_PID=$!
+    echo "✅ Chatbot Service started with PID: $CHATBOT_PID"
+fi
+
+
+
+
 echo
-echo "✨ Both services have been started in the background."
+echo "✨ All services have been started in the background."
 echo "📋 To check service status, run:"
-echo "   python test_endpoints.py https://your-llm-service-url.ngrok-free.app https://your-ml-models-url.ngrok-free.app"
+echo "   python test_endpoints.py "
 echo
 echo "📝 Log information will be displayed in the terminal."
 echo "💡 To stop the services, run: ./stop_services.sh"

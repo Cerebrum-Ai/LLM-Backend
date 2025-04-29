@@ -27,7 +27,7 @@ def init_llm_input(question, image=None, not_none_keys=None, ml_results=None):
     # Pre-compile templates for better performance
     if image is None:
         template = """Question: {question}, Additional attached data: {not_none_keys}
-{ml_context}
+        ml_context: {ml_context}
 
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
@@ -41,8 +41,8 @@ Instructions:
 
 Answer: """
     else:
-        template = """Question: {question}, image data: {image} Additional attached data: {not_none_keys}
-{ml_context}
+        template = """Question: {question}, image_url: {image} Additional attached data: {not_none_keys}
+        ml_context: {ml_context}
 
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
@@ -63,7 +63,7 @@ Answer: """
         llm_manager.start_inference()  # Pause heartbeats during inference
         return llm_chain.invoke({
             "question": question,
-            "image": image,
+            "image": {'url':image},
             "not_none_keys": not_none_keys,
             "ml_context": ml_context
         })
@@ -159,81 +159,3 @@ Answer:
     finally:
         llm_manager.end_inference()  # Resume heartbeats
 
-# Add a new function to handle combined analysis cases
-def process_combined_analysis(question, context=None, image=None, audio_emotion=None, image_analysis=None):
-    """
-    Process a medical query with any combination of input modalities
-    
-    Args:
-        question: The medical question text
-        context: Optional medical context from vector DB
-        image: Optional image data in base64 or URL format
-        audio_emotion: Optional emotion analysis from audio
-        image_analysis: Optional image analysis results
-        
-    Returns:
-        Medical diagnosis formatted according to prompt template
-    """
-    llm_manager = LLMManager.get_instance()
-    
-    # Build ML context
-    ml_context_parts = []
-    if audio_emotion:
-        ml_context_parts.append(f"Audio analysis detected emotional state: {audio_emotion}")
-    if image_analysis:
-        ml_context_parts.append(f"Image analysis detected: {image_analysis}")
-    
-    ml_context = "\n".join(ml_context_parts)
-    
-    # Use the multimodal LLM if we have an image, otherwise use medical LLM
-    if image:
-        template = """Question: {question}
-Image data: {image}
-Context: {context}
-ML Analysis: {ml_context}
-
-Provide a concise medical analysis following this exact format:
-
-Diagnosis: [most likely condition]
-Symptoms: [list up to 5 key symptoms, comma-separated]
-Treatment: [list up to 3 primary treatments, comma-separated]
-Emotional State: [if detected in audio analysis]
-Visual Assessment: [key observations from image]
-
-Keep the entire response under 75 words.
-Output ONLY the formatted sections as shown above.
-
-Answer:
-"""
-        prompt = PromptTemplate.from_template(template)
-        llm_chain = prompt | llm_manager.llm  # Use multimodal LLM for image analysis
-    else:
-        template = """Question: {question}
-Context: {context}
-ML Analysis: {ml_context}
-
-Provide a concise medical analysis following this exact format:
-
-Diagnosis: [most likely condition]
-Symptoms: [list up to 5 key symptoms, comma-separated]
-Treatment: [list up to 3 primary treatments, comma-separated]
-Emotional State: [if detected in audio analysis]
-
-Keep the entire response under 60 words.
-Output ONLY the formatted sections as shown above.
-
-Answer:
-"""
-        prompt = PromptTemplate.from_template(template)
-        llm_chain = prompt | llm_manager.medical_llm  # Use medical LLM if no image
-    
-    try:
-        llm_manager.start_inference()  # Pause heartbeats during inference
-        return llm_chain.invoke({
-            "question": question,
-            "image": image,
-            "context": context or "",
-            "ml_context": ml_context
-        })
-    finally:
-        llm_manager.end_inference()  # Resume heartbeats

@@ -15,6 +15,50 @@ import sys
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+def manual_typing_entry():
+    """
+    Use TypingDataCollector from typing_analyzer.py to capture real keystroke data, send it to the node_handler /api/analyze_typing endpoint, and print the result.
+    """
+    from tests.typing_analyzer import TypingDataCollector
+    import time
+    url = os.environ.get("NODE_HANDLER_URL", "http://localhost:8000")
+    if not url.endswith("/api/analyze_typing"):
+        url = f"{url.rstrip('/')}/api/analyze_typing"
+
+    print("\nA typing window will open. Please type your sentence and press ESC when done.")
+    collector = TypingDataCollector()
+    collector.start_recording()
+    print("Start typing...")
+    # Wait for user to finish typing (ESC will stop recording)
+    while collector.is_recording:
+        time.sleep(0.1)
+    result = collector.stop_recording()
+    keystrokes = result['keystrokes']
+    user_text = ''.join([k['key'] for k in keystrokes if k['key'] not in ['Key.esc', 'Key.enter', 'Key.shift', 'Key.ctrl', 'Key.alt', 'Key.cmd']])
+    ml_url = os.environ.get("NODE_HANDLER_URL", "http://localhost:8000")
+    if not ml_url.endswith("/ml/forward"):
+        ml_url = f"{ml_url.rstrip('/')}/ml/forward"
+    payload = {
+        "url": {
+            "keystrokes": keystrokes,
+            "text": user_text
+        },
+        "data_type": "typing",
+        "model": "pattern"
+    }
+    try:
+        print(f"\nSending your typing data to: {ml_url}")
+        response = requests.post(ml_url, json=payload, timeout=15)
+        print(f"Status code: {response.status_code}")
+        if response.status_code == 200:
+            result = response.json()
+            print("\n\u2705 Analysis results:")
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"\n\u274C Error: {response.text}")
+    except requests.RequestException as e:
+        print(f"\n\u274C Request failed: {str(e)}")
+
 def generate_typing_data(num_keystrokes=50, condition=None):
     """
     Generate synthetic typing data for testing.
@@ -88,52 +132,46 @@ def generate_typing_data(num_keystrokes=50, condition=None):
         "text": "This is sample text for testing typing analysis"
     }
 
-def test_typing_analysis(url="http://localhost:5050", condition=None, num_keystrokes=50):
+def test_typing_analysis(url=None, condition=None, num_keystrokes=50):
+    # Always use NODE_HANDLER_URL + /ml/forward for typing analysis
+    ml_url = os.environ.get("NODE_HANDLER_URL", "http://localhost:8000")
+    if not ml_url.endswith("/ml/forward"):
+        ml_url = f"{ml_url.rstrip('/')}/ml/forward"
+
     """
     Test the typing analysis endpoint with generated data.
     
     Args:
-        url (str): Base URL of the LLM service
+        url (str): Base URL of the LLM service (ignored, for compatibility)
         condition (str): Optional condition to simulate
         num_keystrokes (int): Number of keystrokes to generate
     """
-    endpoint = f"{url}/api/analyze_typing"
-    print(f"\n🔍 Testing Typing Analysis Endpoint: {endpoint}")
+    print(f"\n\U0001F50D Testing Typing Analysis Endpoint: {ml_url}")
     print(f"Condition: {condition or 'normal'}")
     print(f"Generating {num_keystrokes} keystrokes...")
-    
-    # Generate data
     typing_data = generate_typing_data(num_keystrokes, condition)
-    
-    # Send request
+    payload = {
+        "url": typing_data,
+        "data_type": "typing",
+        "model": "pattern"
+    }
+    print("Sending request...")
     try:
-        print("Sending request...")
-        response = requests.post(endpoint, json=typing_data, timeout=15)
-        
+        response = requests.post(ml_url, json=payload, timeout=15)
         print(f"Status code: {response.status_code}")
-        
         if response.status_code == 200:
             result = response.json()
-            print("\n✅ Success! Analysis results:")
-            print("-" * 50)
-            
-            if "analysis" in result:
-                analysis = result["analysis"]
-                
-                if "detected_condition" in analysis:
-                    print(f"Detected condition: {analysis['detected_condition']}")
-                
-                if "probabilities" in analysis:
-                    print("\nProbabilities:")
-                    for cond, prob in sorted(analysis["probabilities"].items(), key=lambda x: x[1], reverse=True):
-                        print(f"  {cond}: {prob:.2f}")
-                
-                if "features" in analysis:
-                    print("\nKey Features:")
-                    for feature, value in analysis["features"].items():
-                        print(f"  {feature}: {value:.2f}")
-            else:
-                print(json.dumps(result, indent=2))
+            print("\n\u2705 Analysis results:")
+            print(json.dumps(result, indent=2))
+            if "probabilities" in result:
+                print("\nProbabilities:")
+                for cond, prob in sorted(result["probabilities"].items(), key=lambda x: x[1], reverse=True):
+                    print(f"  {cond}: {prob:.2f}")
+
+            if "features" in result:
+                print("\nKey Features:")
+                for feature, value in result["features"].items():
+                    print(f"  {feature}: {value:.2f}")
         else:
             print(f"\n❌ Error: {response.text}")
     
@@ -146,9 +184,22 @@ def main():
     parser.add_argument("--condition", choices=["normal", "parkinsons", "essential_tremor", "carpal_tunnel", "multiple_sclerosis"], 
                         help="Simulate specific typing condition")
     parser.add_argument("--keystrokes", type=int, default=50, help="Number of keystrokes to generate")
-    
     args = parser.parse_args()
+
+    # Step 1: Always run synthetic typing test first
     test_typing_analysis(args.url, args.condition, args.keystrokes)
 
+    # Step 2: Prompt for manual typing
+    while True:
+        user_input = input("\nWould you like to try manual typing entry for live analysis? (y/n): ").strip().lower()
+        if user_input == 'y':
+            manual_typing_entry()
+            break
+        elif user_input == 'n':
+            print("Exiting.")
+            break
+        else:
+            print("Please enter 'y' or 'n'.")
+
 if __name__ == "__main__":
-    main() 
+    main()

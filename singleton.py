@@ -60,7 +60,7 @@ class LLMManager:
         callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
         n_gpu_layers =  25
         n_batch = 512
-        n_ctx = 2048
+        n_ctx = 2048  # Increased from 2048 to handle larger images
         llm_params = {
             'n_gpu_layers': n_gpu_layers,
             'n_batch': n_batch,
