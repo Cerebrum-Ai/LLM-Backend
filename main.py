@@ -46,92 +46,7 @@ auth = auth_tokens_str.split(',')
 
 
 
-def image_to_base64_data_uri(input_source, max_width=256, max_height=256, quality=60):
-    """
-    Convert an image to base64 data URI format with optimized compression to reduce token usage
-    while preserving important color information like redness for medical diagnosis.
-    input_source can be either a file path or a URL.
-    
-    Args:
-        input_source: Path, URL, or data URI of the image
-        max_width: Maximum width for the resized image (reduced to 256)
-        max_height: Maximum height for the resized image (reduced to 256)
-        quality: JPEG quality (0-100) for the output image (set to 60 to preserve color details)
-        
-    Returns:
-        A base64 data URI string or None if processing failed
-    """
-    try:
-        from PIL import Image
-        import io
-        
-        # If it's already a data URI, return it as is
-        if isinstance(input_source, str) and input_source.startswith('data:image/'):
-            print(f"Image is already a data URI, length: {len(input_source) // 1024}KB")
-            return input_source
-        
-        # Get image data
-        if isinstance(input_source, str) and input_source.startswith(('http://', 'https://')):
-            # If input is a URL, download the image
-            try:
-                print(f"Downloading image from URL: {input_source}")
-                response = requests.get(input_source, timeout=10)
-                response.raise_for_status()  # Raise exception for bad status codes
-                image_data = response.content
-                # Load image from bytes
-                img = Image.open(io.BytesIO(image_data))
-            except requests.exceptions.RequestException as e:
-                print(f"Error downloading image from URL {input_source}: {str(e)}")
-                return None
-        else:
-            # If input is a file path, read the file
-            try:
-                print(f"Reading image from file: {input_source}")
-                img = Image.open(input_source)
-            except (IOError, OSError) as e:
-                print(f"Error reading image file {input_source}: {str(e)}")
-                return None
-        
-        # Ensure image is in RGB mode for consistent processing
-        if img.mode != 'RGB':
-            # Handle transparency by converting to RGB with white background
-            if img.mode in ('RGBA', 'LA'):
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[3])  # 3 is the alpha channel
-                img = background
-            else:
-                img = img.convert('RGB')
-        
-        # Resize the image while maintaining aspect ratio
-        width, height = img.size
-        print(f"Original image size: {width}x{height}")
-        if width > max_width or height > max_height:
-            # Calculate the scaling factor
-            scale = min(max_width / width, max_height / height)
-            new_width = int(width * scale)
-            new_height = int(height * scale)
-            
-            # Resize the image
-            img = img.resize((new_width, new_height), Image.LANCZOS)
-            print(f"Resized image to: {new_width}x{new_height}")
-        
-        # Apply color reduction while preserving important colors like red
-        # Use adaptive palette to ensure important colors are preserved
-        img = img.quantize(colors=32, method=2)  # Method 2 is MEDIANCUT which preserves dominant colors
-        img = img.convert('RGB')  # Convert back to RGB for JPEG
-        
-        # Save with moderate compression to preserve color information
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=quality, optimize=True)
-        buffer.seek(0)
-        
-        # Only return the path or URL to the processed image, not base64 or data URI
-        return output_path
-    except Exception as e:
-        print(f"Error processing image {input_source}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
+
 
 
 app = Flask(__name__)
@@ -197,24 +112,25 @@ def init(state: State):
         
         # Extract ML results for LLM context
         ml_results = {}
-        
-        # Extract audio emotion results if available
+        # Audio emotion (legacy)
         if isinstance(data.get("audio"), dict) and "emotion" in data["audio"]:
             ml_results["audio"] = data["audio"]["emotion"]
-        
-        # Add other ML result types here as they become available
-        # For example: image analysis, gait analysis, typing pattern analysis
-        
-        # Get initial diagnosis with ML results
+        # New: merge ML results from *_ml fields, INCLUDE ONLY audio_ml and typing_ml for init_llm_input
+        for ml_field in ["audio_ml", "typing_ml"]:  # skip image_ml and gait_ml
+            if ml_field in data and data[ml_field] is not None:
+                ml_results[ml_field.replace('_ml', '')] = data[ml_field]
+        # Get initial diagnosis WITH audio and typing ML results
         initial_response = init_llm_input(
             question=state["question"],
             image=state.get("image"),
             not_none_keys=not_none_keys,
-            ml_results=ml_results
+            ml_results=ml_results if ml_results else None
         )
         
         state["initial_diagnosis"] = initial_response
         state["answer"] = initial_response
+        state["ml_results"] = ml_results  # Save for downstream use
+        state["not_none_keys_data"] = data  # Save full data for downstream use
         
         analysis = {
             "initial_diagnosis": initial_response,
@@ -259,41 +175,32 @@ def retrieve(state: State):
 def generate(state: State):
     """Final generation stage"""
     try:
-        docs_content = state["vectordb_results"]
-        initial_diagnosis = state["initial_diagnosis"]
-        question = state["question"]
+        # Use the initial diagnosis and context to generate a final answer
+        initial_diagnosis = state.get("initial_diagnosis", "")
+        question = state.get("question", "")
+        context = state.get("context", [])
+        # Use the full data and ml_results saved in state
+        not_none_keys_data = state.get("not_none_keys_data", state.get("data", {}))
+        ml_results = state.get("ml_results", {})
         
-        # Get data for context
-        data = state.get("data", {})
-        
-        # Extract ML results for LLM context
-        ml_results = {}
-        
-        # Extract audio emotion results if available
-        if isinstance(data.get("audio"), dict) and "emotion" in data["audio"]:
-            ml_results["audio"] = data["audio"]["emotion"]
-        
-        # Add other ML result types here as they become available
-        # For example: image analysis, gait analysis, typing pattern analysis
-        
-        print(f"Generating final analysis with context length: {len(docs_content)}")
-        final_response = post_llm_input(
-            initial_diagnosis=state["initial_diagnosis"],
-            question=state["question"], 
-            context=docs_content,
-            not_none_keys_data=data,
+        # Call post_llm_input for final answer
+        final_answer = post_llm_input(
+            initial_diagnosis=initial_diagnosis,
+            question=question,
+            context=context,
+            not_none_keys_data=not_none_keys_data,
             ml_results=ml_results
         )
         
-        print(f"Final response generated: {final_response[:100]}...")
-        state["final_analysis"] = final_response
+        print(f"Final response generated: {final_answer[:100]}...")
+        state["final_analysis"] = final_answer
         
         return {
-            "answer": final_response,
+            "answer": final_answer,
             "stage": "final",
             "initial_diagnosis": state["initial_diagnosis"],
             "vectordb_results": state["vectordb_results"],
-            "final_analysis": final_response
+            "final_analysis": final_answer
         }
     except Exception as e:
         print(f"Error in generate stage: {str(e)}")
@@ -339,7 +246,7 @@ def chat():
             question = request.form.get('question')
             if 'image' in request.files:
                 image_file = request.files['image']
-                image = image_to_base64_data_uri(image_file)
+                image = image_file
             if 'gait' in request.files:
                 gait = request.files['gait']
             if 'audio' in request.files:
@@ -353,7 +260,7 @@ def chat():
             if data:
                 question = data.get('question')
                 if 'image' in data:
-                    image = (data['image'])
+                    image = data['image']
                 if 'gait' in data:
                     gait = data['gait']
                 if 'audio' in data:
@@ -361,10 +268,16 @@ def chat():
                     print(f"Received audio data in JSON format in chat endpoint")
                 if 'typing' in data:
                     typing = data['typing']
+                # Extract all ML result fields
+                image_ml = data.get('image_ml')
+                audio_ml = data.get('audio_ml')
+                typing_ml = data.get('typing_ml')
+                gait_ml = data.get('gait_ml')
         # Fallback for other content types
         else:
             data = request.get_json(silent=True)
             question = data.get('question') if data else None
+            image_ml = audio_ml = typing_ml = gait_ml = None
         
         if not question:
             return jsonify({'error': 'Question is required'}), 400
@@ -378,8 +291,12 @@ def chat():
             "image": image,
             "data": {
                 "gait": gait,
-                "audio": audio, 
-                "typing": typing
+                "audio": audio,
+                "typing": typing,
+                "image_ml": image_ml,
+                "audio_ml": audio_ml,
+                "typing_ml": typing_ml,
+                "gait_ml": gait_ml
             },
             "context": [],
             "answer": "",

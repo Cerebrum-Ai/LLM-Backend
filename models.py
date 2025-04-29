@@ -17,6 +17,7 @@ import json
 # Import ML models - audio processing is just one of potentially many ML types
 from models.audio.emotion.audio_processor import SimpleAudioAnalyzer
 from models.typing.pattern.typing_processor import KeystrokeProcessor
+from models.image.classification.medvit_classifier import MedViTClassifier
 
 load_dotenv()
 
@@ -30,6 +31,9 @@ ngrok_auth_tokens = ngrok_auth_tokens_str.split(',')
 current_ngrok_url = None
 shutdown_event = threading.Event()
 i = 0
+
+# Preload all MedViT models at startup (only once)
+MedViTClassifier.preload_all_models()
 
 # Flask application for ML model service
 app = Flask(__name__)
@@ -46,6 +50,9 @@ class MLModels:
         },
         'typing': {
             'pattern': lambda: KeystrokeProcessor.get_instance()
+        },
+        'image': {
+            'classification': lambda: MedViTClassifier
         }
         # Add more model types and names here as they become available:
         # 'image': {
@@ -55,7 +62,7 @@ class MLModels:
         #    'sentiment': lambda: SentimentAnalyzer.get_instance()
         # }
     }
-    
+
     @classmethod
     def initialize_all(cls):
         """Initialize all registered ML models"""
@@ -106,11 +113,38 @@ class MLModels:
         elif data_type == 'typing':
             if model == 'pattern':
                 return cls._process_typing_pattern(model_instance, data)
-        
+        elif data_type == 'image':
+            if model == 'classification':
+                return cls._process_image_classification(model_instance, data)
         # Add more model type processors as they become available
         
         return {"error": f"Processing for {data_type}/{model} not implemented"}
     
+    @classmethod
+    def _process_image_classification(cls, model_instance, image_data):
+        """Process image data with MedViTClassifier or run_all_models if class is passed"""
+        try:
+            import tempfile, requests, os
+            if isinstance(image_data, dict) and 'url' in image_data:
+                image_data = image_data['url']
+            if isinstance(image_data, str) and image_data.startswith('http'):
+                # Download the image to a temp file
+                r = requests.get(image_data)
+                r.raise_for_status()
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as f:
+                    f.write(r.content)
+                    temp_path = f.name
+                image_data = temp_path
+            # If model_instance is a class, run across all models
+            if isinstance(model_instance, type):
+                return model_instance.run_all_models(image_data)
+            else:
+                return model_instance.predict(image_data)
+        except Exception as e:
+            print(f"Error processing image: {str(e)}")
+            import traceback; traceback.print_exc()
+            return {"error": str(e)}
+
     @classmethod
     def _process_audio_emotion(cls, model_instance, audio_data):
         """Process audio data with emotion detection model"""
@@ -471,6 +505,27 @@ def process_ml_data():
                 import traceback
                 traceback.print_exc()
                 result = {"error": str(e)}
+        elif data_type == 'image':
+            if model == 'classification':
+                # Fetch the image data from the URL
+                try:
+                    image_data = requests.get(url).content
+                except requests.RequestException as e:
+                    print(f"Error fetching image data: {str(e)}")
+                    result = {"error": f"Could not fetch image data: {str(e)}"}
+                    return result
+                
+                # Write image bytes to a temporary file and pass the file path to the model
+                temp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                        temp_path = temp_file.name
+                        temp_file.write(image_data)
+                    print(f"Processing image classification using temp file: {temp_path}")
+                    result = MLModels.process('image', model, temp_path)
+                finally:
+                    if temp_path and os.path.exists(temp_path):
+                        os.remove(temp_path)
         else:
             # Other data type handling will be added here as models are implemented
             print(f"Received ML request for unimplemented data type: {data_type}/{model}")

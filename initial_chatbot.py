@@ -46,32 +46,61 @@ if SUPABASE_URL and supabase_secret:
 # If neither is set, supabase will remain None and uploading will error
 
 
-def process_and_upload_image(image_url):
+def process_and_upload_image(image_input):
     """
-    Download image, check resolution, upscale if needed, upload to Supabase Storage, return public URL.
+    Accepts either a URL (str) or a file-like object (e.g., BytesIO, FileStorage), processes and uploads the image, and returns the public URL.
     """
-    # Download image
-    resp = pyrequests.get(image_url)
-    resp.raise_for_status()
-    img = Image.open(io.BytesIO(resp.content))
+    # Handle file-like object or URL
+    if hasattr(image_input, 'read'):
+        # It's a file-like object (e.g., Flask FileStorage)
+        image_bytes = image_input.read()
+        img = Image.open(io.BytesIO(image_bytes))
+    elif isinstance(image_input, (bytes, bytearray)):
+        img = Image.open(io.BytesIO(image_input))
+    elif isinstance(image_input, str):
+        # Assume it's a URL
+        resp = pyrequests.get(image_input)
+        resp.raise_for_status()
+        img = Image.open(io.BytesIO(resp.content))
+    else:
+        raise ValueError('Unsupported image input type for upload.')
     w, h = img.size
     # Upscale if needed
     scale = max(640 / w, 480 / h, 1)
     if w < 640 or h < 480:
         new_w, new_h = int(w * scale), int(h * scale)
         img = img.resize((new_w, new_h), Image.LANCZOS)
+    # Convert to RGB if image has alpha (transparency)
+    if img.mode in ("RGBA", "LA"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])  # 3 is the alpha channel
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
     # Save to buffer
     buf = io.BytesIO()
-    img.save(buf, format="JPEG")
+    img.save(buf, format="PNG")
     buf.seek(0)
     # Upload to Supabase
-    filename = f"image_{int(time.time())}.jpg"
+    filename = f"image_{int(time.time())}.png"
     storage_path = f"{filename}"
     if supabase is None:
         raise Exception("Supabase client not initialized. Set SUPABASE_URL and SUPABASE_KEY.")
-    supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, buf, file_options={"content-type": "image/jpeg"})
+    buf.seek(0)
+    print(f"Uploading to Supabase: storage_path={storage_path}, buf_type={type(buf)}")
+    # Use correct content-type for PNG
+    try:
+        supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, buf, file_options={"content-type": "image/png"})
+    except TypeError as e:
+        print(f"TypeError uploading BytesIO, retrying with bytes: {e}")
+        buf.seek(0)
+        supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, buf.getvalue(), file_options={"content-type": "image/png"})
+    except Exception as e:
+        print(f"Error uploading image to Supabase: {e}")
+        raise
     # Get public URL
     pub_url = supabase.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path)
+    print("Successfully recieved url")
     return pub_url
 
 
@@ -189,25 +218,49 @@ def process_with_llm(data, ml_results=None, llm_url=None):
         # Image preprocessing is now handled exclusively in main.py
         # Just pass the image URL directly
         
-        # Enhance data with ML results if available
+        # If image is present, process and upload it, replacing with the public URL
+        if "image" in data and isinstance(data["image"], str) and data["image"].startswith("http"):
+            try:
+                public_url = process_and_upload_image(data["image"])
+                data["image"] = public_url
+            except Exception as e:
+                print(f"Error processing and uploading image: {e}")
+                # If upload fails, keep the original URL
+                pass
+
+        # Merge all ML results into the data dict for unified LLM context
         if ml_results:
-            # For audio emotion analysis
-            if "audio" in ml_results and "detected_emotion" in ml_results["audio"]:
-                # Structure according to how main.py expects it
-                if isinstance(data.get("audio"), dict):
-                    data["audio"]["emotion"] = ml_results["audio"]
+            for dtype, result in ml_results.items():
+                if dtype == "image":
+                    # Always keep 'image' as the processed public image URL for LLM capabilities
+                    if "image" in data:
+                        data["image_ml"] = result  # Add ML results under a separate key
+                    else:
+                        # If for some reason image is not present, fallback to old logic
+                        data["image_ml"] = result
                 else:
-                    data["audio"] = {
-                        "file": data["audio"] if "audio" in data else None,
-                        "emotion": ml_results["audio"]
-                    }
+                    # If data[dtype] is a dict, update it with ML result
+                    if dtype in data and isinstance(data[dtype], dict):
+                        if isinstance(result, dict):
+                            data[dtype].update(result)
+                        else:
+                            data[dtype][f"{dtype}_ml_result"] = result
+                    else:
+                        entry = {}
+                        if dtype in data:
+                            entry["input"] = data[dtype]
+                        if isinstance(result, dict):
+                            entry.update(result)
+                        else:
+                            entry[f"{dtype}_ml_result"] = result
+                        data[dtype] = entry
         
         # Forward to LLM service
         print(f"Sending request to LLM service at {active_llm_url}")
         response = requests.post(
             f"{active_llm_url}/api/chat",
             json=data,
-            timeout=30  # Increased timeout to 30 seconds
+            timeout=90  # Increased timeout to 30 seconds
         )
         
         if response.status_code == 200:
@@ -520,7 +573,7 @@ if __name__ == '__main__':
         # Start Flask in a separate thread
         from waitress import serve
         flask_thread = threading.Thread(
-            target=lambda: serve(app, host='0.0.0.0', port=5100, threads=4),
+            target=lambda: serve(app, host='0.0.0.0', port=5100, threads=4,channel_timeout=120),
             daemon=True
         )
         print("Starting chatbot service...")

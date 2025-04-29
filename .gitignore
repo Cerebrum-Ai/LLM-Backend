@@ -21,6 +21,7 @@ wheels/
 .installed.cfg
 *.egg
 *.pkl
+!models/image/MedViT/*.pkl
 # Virtual Environment
 venv/
 ENV/
@@ -35,7 +36,7 @@ GPTQ/
 # Model files
 *.gguf
 *.bin
-*.pkl
+!models/image/MedViT/*.pkl
 *.pickle 
 *.h5
 
