@@ -103,6 +103,50 @@ The system consists of two main components that work together:
    - Create embeddings stored in `medical_data_embeddings.pkl`
    - Verify LLM models are working correctly
 
+## Example API Input/Output
+
+### Example Request (JSON)
+```
+POST /api/external/chat
+Content-Type: application/json
+
+{
+  "question": "What disease do I have",
+  "image": "https://odgfmdbnjroqktddkgkz.supabase.co/storage/v1/object/public/test//test.png",
+  "audio": "https://odgfmdbnjroqktddkgkz.supabase.co/storage/v1/object/public/test//output10.wav"
+}
+```
+
+### Example Response (JSON)
+```
+{
+  "analysis": {
+    "audio_analysis": {
+      "detected_emotion": "angry",
+      "probabilities": {
+        "angry": 0.85,
+        "fear": 0.0,
+        "happy": 0.0,
+        "neutral": 0.0,
+        "sad": 0.15
+      }
+    },
+    "final_analysis": "\nDiagnosis: Coronary Artery Disease\nSymptoms: chest pain, shortness of breath, fatigue\nTreatment: medication, lifestyle changes\nEmotional State: angry\n",
+    "image_analysis": {
+      "breastmnist": {"predicted_label": "malignant", "probability": 0.9964368343353271},
+      "chestmnist": {"predicted_label": "Lung Opacity", "probability": 0.2963375449180603},
+      "dermamnist": {"predicted_label": "Melanoma", "probability": 0.4841499626636505},
+      "octmnist": {"predicted_label": "DME", "probability": 0.3850083649158478},
+      "pathmnist": {"predicted_label": "mucus", "probability": 0.9718669056892395},
+      "pneumoniamnist": {"predicted_label": "pneumonia", "probability": 0.9292548298835754}
+    },
+    "initial_diagnosis": "1. Diabetes, 2. Hypertension, 3. Hyperlipidemia, 4. Obesity, 5. Coronary Artery Disease",
+    "vectordb_results": "Coronary Atherosclerosis,\"Chest pain or discomfort (angina), shortness of breath, fatigue, irregular heartbeat, dizziness, nausea, sweating, jaw or arm pain (in some cases), heart attack (when a coronary artery becomes completely blocked)\",\"Lifestyle changes (such as a heart-healthy diet, regular exercise, weight management, smoking cessation), medication (such as aspirin, cholesterol-lowering medications, beta-blockers, calcium channel blockers, nitroglycerin), procedures (such as angioplasty and stenting, coronary artery bypass grafting), cardiac rehabilitation, management of other risk factors (such as high blood pressure, diabetes)\""
+  },
+  "status": "success"
+}
+```
+
 ### 3. Environment Variables
 
 Create a `.env` file in the project root with the following variables:
@@ -390,6 +434,89 @@ curl -X POST \
   -d '{"url": "https://example.com/image.png", "data_type": "image", "model": "classification"}' \
   https://your-models-service-ngrok-url.ngrok-free.app/ml/process
 ```
+
+## Node Handler API Reference
+
+The Node Handler service provides unified routing and orchestration for all backend nodes (LLM, ML, Chatbot). Use these endpoints to interact with the system for routing, direct node calls, and status checks.
+
+### 1. Initial Chatbot Routing (Default Chat Entry)
+Forwards chat requests to the least-loaded available **chatbot** node (typically `initial_chatbot.py`).
+
+- **Endpoint:** `/api/external/chat`
+- **Method:** POST
+- **Content-Type:** `application/json` or `multipart/form-data`
+- **Request Example:**
+  ```json
+  {
+    "question": "What are the symptoms of diabetes?",
+    "session_id": "optional_session_id",
+    "image": "optional_base64_encoded_image",
+    "audio": "optional_base64_encoded_audio",
+    "typing": { "keystrokes": [ ... ] }
+  }
+  ```
+- **Curl Example:**
+  ```bash
+  curl -X POST -H "Content-Type: application/json" \
+    -d '{"question": "What are the symptoms of diabetes?"}' \
+    https://your-node-handler.ngrok-free.app/api/external/chat
+  ```
+
+### 2. Direct LLM Call (Main LLM Service)
+Forwards chat requests directly to the **LLM node** (typically `main.py`), bypassing chatbot orchestration.
+
+- **Endpoint:** `/api/chat` or `/chat`
+- **Method:** POST
+- **Content-Type:** `application/json` or `multipart/form-data`
+- **Request Example:** (same as above)
+- **Curl Example:**
+  ```bash
+  curl -X POST -H "Content-Type: application/json" \
+    -d '{"question": "What is diabetes?",
+          "image": "image_url", }' \
+    https://your-node-handler.ngrok-free.app/api/chat
+  ```
+
+### 3. Direct ML Call (ML Forwarding)
+Forwards ML requests (audio, typing, image) to the ML node.
+
+- **Endpoint:** `/ml/forward`
+- **Method:** POST
+- **Content-Type:** `application/json`
+- **Request Example:**
+  ```json
+  {
+    "url": "https://example.com/image.png",
+    "data_type": "image",
+    "model": "classification"
+  }
+  ```
+- **Curl Example:**
+  ```bash
+  curl -X POST -H "Content-Type: application/json" \
+    -d '{"url": "https://example.com/image.png", "data_type": "image", "model": "classification"}' \
+    https://your-node-handler.ngrok-free.app/ml/forward
+  ```
+
+### 4. Status Call (Node Handler Health)
+Returns the health/status of the node handler and registered nodes.
+
+- **Endpoint:** `/status`
+- **Method:** GET
+- **Curl Example:**
+  ```bash
+  curl https://your-node-handler.ngrok-free.app/status
+  ```
+- **Response Example:**
+  ```json
+  {
+    "status": "ok",
+    "message": "Node handler is running",
+    "active_nodes": 3,
+    "llm_nodes": 1,
+    "ml_nodes": 2
+  }
+  ```
 
 ## Testing
 

@@ -11,7 +11,6 @@ python-dotenv
 scikit-learn
 tensorflow
 tf-keras
-tqdm
 pyaudio
 joblib
 werkzeug
@@ -29,3 +28,12 @@ psutil
 rich
 tqdm
 supabase
+timm
+torchattacks
+torch
+torchvision
+medmnist
+einops
+scikit-image
+fvcore
+fire
