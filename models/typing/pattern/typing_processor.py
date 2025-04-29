@@ -15,7 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.
 class KeystrokeProcessor:
     """
     Analyses typing patterns to detect potential neurological conditions.
-    
+
     This model looks at:
     - Key press duration
     - Time between keystrokes
@@ -27,26 +27,26 @@ class KeystrokeProcessor:
     _model = None
     _conditions = ["parkinsons", "essential_tremor", "carpal_tunnel", "multiple_sclerosis", "normal"]
     _scaler = None
-    
+
     @classmethod
     def get_instance(cls):
         """Get or create the singleton instance"""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-    
+
     def __init__(self):
         """Initialize the model - only called once"""
         if KeystrokeProcessor._instance is not None:
             raise Exception("Use get_instance() instead")
-        
+
         # Get the directory where this file is located
         module_dir = os.path.dirname(os.path.abspath(__file__))
-        
+
         # Load or train the model
         model_path = os.path.join(module_dir, "typing_pattern_model.pkl")
         scaler_path = os.path.join(module_dir, "typing_scaler.pkl")
-        
+
         print(f"Looking for typing model at: {model_path}")
         if os.path.exists(model_path) and os.path.exists(scaler_path):
             print("Loading existing typing pattern model...")
@@ -58,24 +58,24 @@ class KeystrokeProcessor:
             # Save the model and scaler
             joblib.dump(self._model, model_path)
             joblib.dump(self._scaler, scaler_path)
-        
+
         print("Keystroke Processor initialized successfully")
-    
+
     def _train_model(self):
         """Train a model for keystroke pattern analysis"""
         print("Training a Random Forest model for typing pattern analysis")
-        
+
         # Create synthetic features for different conditions
         # In a real implementation, this would use real training data
-        
+
         # Generate synthetic data
         np.random.seed(42)  # For reproducibility
         num_samples_per_condition = 100
         num_features = 12
-        
+
         features = []
         labels = []
-        
+
         # Feature meanings:
         # 0: avg_key_press_duration (ms)
         # 1: std_key_press_duration (ms)
@@ -89,7 +89,7 @@ class KeystrokeProcessor:
         # 9: rhythm_consistency (0-1)
         # 10: pause_frequency (pauses per minute)
         # 11: avg_pause_duration (ms)
-        
+
         # Generate samples for each condition with specific patterns
         # Parkinson's: Longer key durations, higher variability, more errors
         for _ in range(num_samples_per_condition):
@@ -109,7 +109,7 @@ class KeystrokeProcessor:
             ])
             features.append(parkinsons_sample)
             labels.append("parkinsons")
-        
+
         # Essential Tremor: Variable key durations, some errors, pauses
         for _ in range(num_samples_per_condition):
             tremor_sample = np.array([
@@ -128,7 +128,7 @@ class KeystrokeProcessor:
             ])
             features.append(tremor_sample)
             labels.append("essential_tremor")
-        
+
         # Carpal Tunnel: More pressure, less variable, typing pauses
         for _ in range(num_samples_per_condition):
             carpal_sample = np.array([
@@ -147,7 +147,7 @@ class KeystrokeProcessor:
             ])
             features.append(carpal_sample)
             labels.append("carpal_tunnel")
-        
+
         # Multiple Sclerosis: Fatigue pattern, starts normal, slows down
         for _ in range(num_samples_per_condition):
             ms_sample = np.array([
@@ -166,7 +166,7 @@ class KeystrokeProcessor:
             ])
             features.append(ms_sample)
             labels.append("multiple_sclerosis")
-        
+
         # Normal typing: Consistent, fewer errors, smooth rhythm
         for _ in range(num_samples_per_condition):
             normal_sample = np.array([
@@ -185,22 +185,22 @@ class KeystrokeProcessor:
             ])
             features.append(normal_sample)
             labels.append("normal")
-        
+
         # Convert to numpy arrays
         X = np.array(features)
         y = np.array(labels)
-        
+
         # Scale the features
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
-        
+
         # Train a model
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_scaled, y)
-        
+
         print(f"Model trained on {len(X)} samples")
         return model, scaler
-    
+
     def _extract_typing_features(self, typing_data):
         """
         Extract features from typing data.
@@ -214,8 +214,28 @@ class KeystrokeProcessor:
             ],
             "text": "The actual text that was typed, including errors and corrections"
         }
+        
+        Also supports alternative format:
+        {
+            "keystrokes": [
+                {"key": "a", "press_time": 1620136589000, "release_time": 1620136589080, "pressure": 0.8},
+                {"key": "b", "press_time": 1620136589200, "release_time": 1620136589270, "pressure": 0.7},
+                ...
+            ],
+            "text": "The actual text that was typed, including errors and corrections"
+        }
         """
         try:
+            # First, check if the data is nested (as in the test script)
+            if isinstance(typing_data, dict) and len(typing_data.keys()) == 0:
+                # Empty dictionary, can't process
+                raise ValueError("Empty typing data dictionary")
+                
+            # Handle case where data might be nested in a 'url' field (from the test script)
+            if isinstance(typing_data, dict) and 'url' in typing_data and isinstance(typing_data['url'], dict):
+                typing_data = typing_data['url']
+                print(f"Extracted typing data from 'url' field: {typing_data}")
+            
             keystrokes = typing_data.get("keystrokes", [])
             if not keystrokes or len(keystrokes) < 10:
                 raise ValueError("Not enough keystroke data (minimum 10 required)")
@@ -225,18 +245,25 @@ class KeystrokeProcessor:
             between_keys = []
             pressures = []
             
+            # Determine which time fields are used in this dataset
+            sample_keystroke = keystrokes[0]
+            press_field = "press_time" if "press_time" in sample_keystroke else "timeDown"
+            release_field = "release_time" if "release_time" in sample_keystroke else "timeUp"
+            
+            print(f"Using time fields: press={press_field}, release={release_field}")
+            
             for i, event in enumerate(keystrokes):
                 # Key press duration
-                if "timeDown" in event and "timeUp" in event:
-                    duration = event["timeUp"] - event["timeDown"]
+                if press_field in event and release_field in event:
+                    duration = event[release_field] - event[press_field]
                     press_durations.append(duration)
                 
                 # Time between keystrokes
-                if i > 0 and "timeDown" in event and "timeDown" in keystrokes[i-1]:
-                    between = event["timeDown"] - keystrokes[i-1]["timeDown"]
+                if i > 0 and press_field in event and press_field in keystrokes[i-1]:
+                    between = event[press_field] - keystrokes[i-1][press_field]
                     if 0 < between < 2000:  # Filter out pauses > 2 seconds
                         between_keys.append(between)
-                    
+                
                 # Pressure if available
                 if "pressure" in event:
                     pressures.append(event["pressure"])
@@ -254,10 +281,15 @@ class KeystrokeProcessor:
             
             # Calculate typing speed (chars per minute)
             if len(keystrokes) >= 2:
-                first_time = keystrokes[0]["timeDown"]
-                last_time = keystrokes[-1]["timeDown"]
-                total_time_min = (last_time - first_time) / 60000  # convert ms to minutes
-                typing_speed = len(keystrokes) / total_time_min if total_time_min > 0 else 250
+                # Use the press field we determined earlier
+                try:
+                    first_time = keystrokes[0][press_field]
+                    last_time = keystrokes[-1][press_field]
+                    total_time_min = (last_time - first_time) / 60000  # convert ms to minutes
+                    typing_speed = len(keystrokes) / total_time_min if total_time_min > 0 else 250
+                except (KeyError, TypeError, ZeroDivisionError):
+                    # If there's any issue with the calculation, use defaults
+                    typing_speed = 250
             else:
                 typing_speed = 250  # default
             
@@ -275,7 +307,7 @@ class KeystrokeProcessor:
             # Calculate rhythm consistency
             # Higher value means more consistent timing between keystrokes
             if len(between_keys) > 5:
-                rhythm_consistency = 1.0 - (std_between_keys / avg_between_keys) 
+                rhythm_consistency = 1.0 - (std_between_keys / avg_between_keys)
                 rhythm_consistency = max(0.1, min(0.95, rhythm_consistency))
             else:
                 rhythm_consistency = 0.8  # default
@@ -306,7 +338,7 @@ class KeystrokeProcessor:
         except Exception as e:
             print(f"Error extracting typing features: {str(e)}")
             raise
-    
+
     def analyze_typing(self, typing_data):
         """
         Analyze typing data to detect potential neurological conditions.
@@ -318,9 +350,54 @@ class KeystrokeProcessor:
             dict: Detected condition and probabilities
         """
         try:
-            if not typing_data or "keystrokes" not in typing_data:
+            # Handle the specific data structure from the test script
+            # The test script sends data in format: {"url": {"keystrokes": [...], "text": "..."}, "data_type": "typing", "model": "pattern"}
+            
+            # Debug the input data structure
+            print(f"\n=== TYPING DATA DEBUG ===\nInput data type: {type(typing_data)}")
+            if isinstance(typing_data, dict):
+                print(f"Top-level keys: {list(typing_data.keys())}")
+                
+                # Case 1: Data is wrapped in the complete request payload
+                if 'url' in typing_data and 'data_type' in typing_data and typing_data['data_type'] == 'typing':
+                    print("Found complete request payload structure")
+                    if isinstance(typing_data['url'], dict):
+                        typing_data = typing_data['url']
+                        print(f"Extracted typing data from 'url' field: {list(typing_data.keys()) if isinstance(typing_data, dict) else 'not a dict'}")
+                
+                # Check if we have keystroke data
+                if isinstance(typing_data, dict) and "keystrokes" in typing_data:
+                    keystrokes = typing_data["keystrokes"]
+                    print(f"Number of keystrokes: {len(keystrokes)}")
+                    
+                    if len(keystrokes) > 0:
+                        print(f"First keystroke keys: {list(keystrokes[0].keys())}")
+                        
+                        # Convert press_time/release_time to timeDown/timeUp format
+                        for keystroke in keystrokes:
+                            if "press_time" in keystroke:
+                                keystroke["timeDown"] = keystroke["press_time"]
+                            if "release_time" in keystroke:
+                                keystroke["timeUp"] = keystroke["release_time"]
+                        
+                        print(f"After conversion, first keystroke: {keystrokes[0]}")
+                else:
+                    print(f"No keystroke data found in typing_data")
+            else:
+                print(f"typing_data is not a dictionary: {typing_data}")
+            print("=== END DEBUG ===\n")
+            
+            # Ensure we have valid keystroke data
+            if not isinstance(typing_data, dict) or "keystrokes" not in typing_data:
                 return {
                     "error": "Invalid typing data format. Expected 'keystrokes' field.",
+                    "detected_condition": "unknown"
+                }
+            
+            keystrokes = typing_data["keystrokes"]
+            if len(keystrokes) < 10:
+                return {
+                    "error": "Not enough keystroke data (minimum 10 required)",
                     "detected_condition": "unknown"
                 }
             
@@ -357,4 +434,4 @@ class KeystrokeProcessor:
             }
 
 # For backwards compatibility if needed
-TypingAnalyzer = KeystrokeProcessor 
+TypingAnalyzer = KeystrokeProcessor

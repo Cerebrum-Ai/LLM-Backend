@@ -18,6 +18,7 @@ ML_MODELS_URL = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
 LLM_APP_URL = os.environ.get("LLM_APP_URL", "http://localhost:5050")
 NGROK_AUTH_TOKEN = os.environ.get("NGROK_AUTH_TOKEN")
 NGROK_AUTH_TOKENS = os.environ.get("NGROK_AUTH_TOKENS")
+HEARTBEAT_INTERVAL = 30  # seconds
 
 app = Flask(__name__)
 current_ngrok_url = None
@@ -26,6 +27,53 @@ shutdown_event = threading.Event()
 # ==========================================
 # Chatbot Logic
 # ==========================================
+
+from PIL import Image
+from supabase import create_client, Client
+import io
+import requests as pyrequests
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+# Prefer SUPABASE_ADMIN_KEY (service_role) if set, fall back to SUPABASE_KEY
+SUPABASE_ADMIN_KEY = os.environ.get("SUPABASE_ADMIN_KEY")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "images")
+
+supabase: Client = None
+supabase_secret = SUPABASE_ADMIN_KEY or SUPABASE_KEY
+if SUPABASE_URL and supabase_secret:
+    supabase = create_client(SUPABASE_URL, supabase_secret)
+# If neither is set, supabase will remain None and uploading will error
+
+
+def process_and_upload_image(image_url):
+    """
+    Download image, check resolution, upscale if needed, upload to Supabase Storage, return public URL.
+    """
+    # Download image
+    resp = pyrequests.get(image_url)
+    resp.raise_for_status()
+    img = Image.open(io.BytesIO(resp.content))
+    w, h = img.size
+    # Upscale if needed
+    scale = max(640 / w, 480 / h, 1)
+    if w < 640 or h < 480:
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+    # Save to buffer
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+    # Upload to Supabase
+    filename = f"image_{int(time.time())}.jpg"
+    storage_path = f"{filename}"
+    if supabase is None:
+        raise Exception("Supabase client not initialized. Set SUPABASE_URL and SUPABASE_KEY.")
+    supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, buf, file_options={"content-type": "image/jpeg"})
+    # Get public URL
+    pub_url = supabase.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path)
+    return pub_url
+
 
 def analyze_input(data):
     """
@@ -126,6 +174,8 @@ def process_ml_data(data, data_type, model, ml_url=None):
         traceback.print_exc()
         return {"error": str(e)}
 
+# Image preprocessing is now handled exclusively in main.py
+
 def process_with_llm(data, ml_results=None, llm_url=None):
     """Process data with the LLM service"""
     try:
@@ -135,6 +185,9 @@ def process_with_llm(data, ml_results=None, llm_url=None):
         active_llm_url = llm_url or LLM_APP_URL
         
         print(f"Using LLM URL: {active_llm_url}")
+        
+        # Image preprocessing is now handled exclusively in main.py
+        # Just pass the image URL directly
         
         # Enhance data with ML results if available
         if ml_results:
@@ -293,33 +346,48 @@ def chat():
 # ==========================================
 
 def run_ngrok():
-    """Set up an ngrok tunnel"""
+    """Set up an ngrok tunnel with token cycling and register with node handler automatically (using ngrok package)"""
     global current_ngrok_url
-    try:
-        # Check for auth token
-        auth_token = NGROK_AUTH_TOKEN
-        
-        # If individual token not set, try to use the tokens list that main.py and models.py use
-        if not auth_token and NGROK_AUTH_TOKENS:
-            auth_tokens = NGROK_AUTH_TOKENS.split(',')
-            if auth_tokens:
-                auth_token = auth_tokens[0]  # Use the first token
-        
-        if not auth_token:
-            print("Error: No ngrok auth token available. Set NGROK_AUTH_TOKEN or NGROK_AUTH_TOKENS in .env")
-            return None
-            
-        # Configure ngrok
-        ngrok.set_auth_token(auth_token)
-        
-        # Start ngrok tunnel
-        tunnel = ngrok.connect(5100)  # Use a different port than your other services
-        current_ngrok_url = tunnel.url()
-        print(f"Chatbot is publicly accessible at: {current_ngrok_url}")
-        return current_ngrok_url
-    except Exception as e:
-        print(f"Error setting up ngrok: {str(e)}")
+    import ngrok
+    auth_tokens = []
+    if NGROK_AUTH_TOKEN:
+        auth_tokens.append(NGROK_AUTH_TOKEN)
+    if NGROK_AUTH_TOKENS:
+        auth_tokens.extend(NGROK_AUTH_TOKENS.split(','))
+    if not auth_tokens:
+        print("Error: No ngrok auth tokens available. Set NGROK_AUTH_TOKEN or NGROK_AUTH_TOKENS in .env")
         return None
+    listener = None
+    for i, token in enumerate(auth_tokens):
+        try:
+            print(f"Trying ngrok auth token {i + 1}/{len(auth_tokens)}...")
+            ngrok.set_auth_token(token)
+            time.sleep(2)
+            listener = ngrok.forward(5100)
+            current_ngrok_url = listener.url()
+            print(f"Ingress established at: {current_ngrok_url}")
+            # Register with node handler after ngrok is set up
+            def registration_retry():
+                while not shutdown_event.is_set():
+                    if register_with_node_handler():
+                        break
+                    time.sleep(10)
+            if not register_with_node_handler():
+                print("Failed to register with node handler. Will keep trying...")
+                registration_thread = threading.Thread(target=registration_retry, daemon=True)
+                registration_thread.start()
+            # Start heartbeat thread
+            heartbeat_thread = threading.Thread(target=send_heartbeat, daemon=True)
+            heartbeat_thread.start()
+            # Keep the tunnel alive
+            while not shutdown_event.is_set():
+                time.sleep(1)
+            return current_ngrok_url
+        except Exception as e:
+            print(f"Error setting up ngrok: {str(e)}")
+            continue
+    print("Failed to establish ngrok tunnel with any available tokens.")
+    return None
 
 def register_with_node_handler():
     """Register this chatbot with the node handler"""
@@ -356,6 +424,76 @@ def deregister_from_node_handler():
         requests.post(f"{NODE_HANDLER_URL}/deregister", json={"url": current_ngrok_url}, timeout=5)
     except Exception as e:
         print(f"Error deregistering: {str(e)}")
+
+def send_heartbeat():
+    """Send periodic heartbeat to node handler"""
+    global current_ngrok_url, HEARTBEAT_INTERVAL  # Add global declaration for HEARTBEAT_INTERVAL
+    consecutive_failures = 0
+    max_consecutive_failures = 1  # Respond quickly to disconnections
+    reconnection_in_progress = False
+    
+    while not shutdown_event.is_set():
+        try:
+            if reconnection_in_progress:
+                time.sleep(HEARTBEAT_INTERVAL)
+                continue
+                
+            print("\nSending heartbeat to node handler...")
+            response = requests.post(
+                f"{NODE_HANDLER_URL}/heartbeat",
+                json={"url": current_ngrok_url},
+                timeout=5
+            )
+            if response.status_code != 200:
+                print(f"Heartbeat not acknowledged: {response.text}")
+            consecutive_failures = 0
+        except Exception as e:
+            print(f"Heartbeat error: {str(e)}")
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print("\n=== Node Handler Connection Lost ===")
+                print("Error detected. Starting reconnection process...")
+                reconnection_in_progress = True
+                if handle_node_handler_disconnect():
+                    consecutive_failures = 0
+                    reconnection_in_progress = False
+                    print("✓ Successfully reconnected to node handler")
+        time.sleep(HEARTBEAT_INTERVAL)
+
+def handle_node_handler_disconnect():
+    """Handle disconnection from node handler"""
+    print("Node handler disconnected. Attempting to reconnect...")
+    max_retries = 5
+    retry_delay = 2  # Start with 2 seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Try to reconnect
+            if register_with_node_handler():
+                print("Successfully reconnected to node handler")
+                return True
+            
+            # If registration failed, wait before retrying
+            print(f"Reconnection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)  # Cap at 30 seconds
+            
+        except Exception as e:
+            print(f"Error during reconnection attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)
+    
+    print("Failed to reconnect after multiple attempts")
+    return False
+
+def registration_retry():
+    """Retry registration with node handler until successful"""
+    while not shutdown_event.is_set():
+        if register_with_node_handler():
+            print("Successfully registered with node handler")
+            break
+        time.sleep(10)  # Wait 10 seconds between attempts
 
 def handle_shutdown(signum, frame):
     """Handle shutdown signals"""

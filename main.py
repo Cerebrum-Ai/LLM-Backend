@@ -46,35 +46,91 @@ auth = auth_tokens_str.split(',')
 
 
 
-def image_to_base64_data_uri(input_source):
+def image_to_base64_data_uri(input_source, max_width=256, max_height=256, quality=60):
     """
-    Convert an image to base64 data URI format.
+    Convert an image to base64 data URI format with optimized compression to reduce token usage
+    while preserving important color information like redness for medical diagnosis.
     input_source can be either a file path or a URL.
+    
+    Args:
+        input_source: Path, URL, or data URI of the image
+        max_width: Maximum width for the resized image (reduced to 256)
+        max_height: Maximum height for the resized image (reduced to 256)
+        quality: JPEG quality (0-100) for the output image (set to 60 to preserve color details)
+        
+    Returns:
+        A base64 data URI string or None if processing failed
     """
     try:
-        if input_source.startswith(('http://', 'https://')):
+        from PIL import Image
+        import io
+        
+        # If it's already a data URI, return it as is
+        if isinstance(input_source, str) and input_source.startswith('data:image/'):
+            print(f"Image is already a data URI, length: {len(input_source) // 1024}KB")
+            return input_source
+        
+        # Get image data
+        if isinstance(input_source, str) and input_source.startswith(('http://', 'https://')):
             # If input is a URL, download the image
             try:
+                print(f"Downloading image from URL: {input_source}")
                 response = requests.get(input_source, timeout=10)
                 response.raise_for_status()  # Raise exception for bad status codes
                 image_data = response.content
+                # Load image from bytes
+                img = Image.open(io.BytesIO(image_data))
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading image from URL {input_source}: {str(e)}")
                 return None
         else:
             # If input is a file path, read the file
             try:
-                with open(input_source, "rb") as img_file:
-                    image_data = img_file.read()
+                print(f"Reading image from file: {input_source}")
+                img = Image.open(input_source)
             except (IOError, OSError) as e:
                 print(f"Error reading image file {input_source}: {str(e)}")
                 return None
         
-        # Convert to base64
-        base64_data = base64.b64encode(image_data).decode('utf-8')
-        return f"data:image/png;base64,{base64_data}"
+        # Ensure image is in RGB mode for consistent processing
+        if img.mode != 'RGB':
+            # Handle transparency by converting to RGB with white background
+            if img.mode in ('RGBA', 'LA'):
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])  # 3 is the alpha channel
+                img = background
+            else:
+                img = img.convert('RGB')
+        
+        # Resize the image while maintaining aspect ratio
+        width, height = img.size
+        print(f"Original image size: {width}x{height}")
+        if width > max_width or height > max_height:
+            # Calculate the scaling factor
+            scale = min(max_width / width, max_height / height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            
+            # Resize the image
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+            print(f"Resized image to: {new_width}x{new_height}")
+        
+        # Apply color reduction while preserving important colors like red
+        # Use adaptive palette to ensure important colors are preserved
+        img = img.quantize(colors=32, method=2)  # Method 2 is MEDIANCUT which preserves dominant colors
+        img = img.convert('RGB')  # Convert back to RGB for JPEG
+        
+        # Save with moderate compression to preserve color information
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=quality, optimize=True)
+        buffer.seek(0)
+        
+        # Only return the path or URL to the processed image, not base64 or data URI
+        return output_path
     except Exception as e:
         print(f"Error processing image {input_source}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -297,7 +353,7 @@ def chat():
             if data:
                 question = data.get('question')
                 if 'image' in data:
-                    image = image_to_base64_data_uri(data['image'])
+                    image = (data['image'])
                 if 'gait' in data:
                     gait = data['gait']
                 if 'audio' in data:
@@ -305,33 +361,6 @@ def chat():
                     print(f"Received audio data in JSON format in chat endpoint")
                 if 'typing' in data:
                     typing = data['typing']
-                    print(f"Received typing data in JSON format in chat endpoint")
-                    
-                    # If typing data contains keystrokes but not analysis, process it
-                    if isinstance(typing, dict) and 'keystrokes' in typing and 'pattern' not in typing:
-                        try:
-                            # Call the ML model service to analyze typing
-                            ml_models_url = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
-                            response = requests.post(
-                                f"{ml_models_url}/ml/process",
-                                json={
-                                    "url": typing,
-                                    "data_type": "typing",
-                                    "model": "pattern"
-                                },
-                                timeout=10
-                            )
-                            
-                            if response.status_code == 200:
-                                # Add the analysis to the typing data
-                                typing = {
-                                    "raw": typing,
-                                    "pattern": response.json()
-                                }
-                                print(f"Added typing pattern analysis: {typing['pattern']}")
-                        except Exception as e:
-                            print(f"Error processing typing data: {str(e)}")
-                            # Continue with raw typing data if analysis fails
         # Fallback for other content types
         else:
             data = request.get_json(silent=True)
@@ -387,165 +416,6 @@ def chat():
             'message': str(e)
         }), 500
 
-# Replace the audio analysis endpoint
-@app.route('/api/analyze_audio', methods=['POST'])
-@check_initialization
-def analyze_audio_endpoint():
-    try:
-        audio_data = None
-        temp_path = None
-        
-        # Process form data or JSON
-        if request.content_type and request.content_type.startswith('multipart/form-data'):
-            if 'audio' in request.files:
-                audio_file = request.files['audio']
-                print(f"Received audio file: {audio_file.filename}, content_type: {audio_file.content_type}")
-                
-                # Save the uploaded file to a temporary file
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                    temp_path = temp_file.name
-                    audio_file.save(temp_file)
-            else:
-                print("No audio file found in the request files")
-                return jsonify({'error': 'No audio file provided'}), 400
-        elif request.content_type and request.content_type.startswith('application/json'):
-            data = request.get_json(silent=True)
-            if data and 'audio' in data:
-                audio_data = data['audio']
-                # If it's base64 data, save it
-                if isinstance(audio_data, str) and audio_data.startswith('data:audio'):
-                    audio_content = audio_data.split(',')[1]
-                    decoded_audio = base64.b64decode(audio_content)
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                        temp_path = temp_file.name
-                        temp_file.write(decoded_audio)
-            else:
-                print("No audio data found in JSON request")
-                return jsonify({'error': 'No audio data provided'}), 400
-        else:
-            print(f"Unsupported content type: {request.content_type}")
-            return jsonify({'error': f'Unsupported content type: {request.content_type}'}), 400
-            
-        if not temp_path:
-            return jsonify({'error': 'Failed to process audio data'}), 400
-        
-        # Call ML models endpoint for audio analysis
-        ml_models_url = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
-        
-        try:
-            # Make request to models service
-            response = requests.post(
-                f"{ml_models_url}/ml/process",
-                json={
-                    "url": temp_path,
-                    "data_type": "audio",
-                    "model": "emotion"
-                },
-                timeout=10
-            )
-            
-            # Clean up the temporary file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            
-            if response.status_code == 200:
-                analysis = response.json()
-                print(f"Analysis result: {analysis}")
-                return jsonify({
-                    'status': 'success',
-                    'analysis': analysis
-                })
-            else:
-                print(f"Error from ML service: {response.text}")
-                return jsonify({
-                    'status': 'error',
-                    'message': f"ML service returned error: {response.text}"
-                }), 500
-                
-        except requests.RequestException as e:
-            print(f"Error calling ML service: {str(e)}")
-            return jsonify({
-                'status': 'error',
-                'message': f"Failed to communicate with ML service: {str(e)}"
-            }), 500
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        app.logger.error(f"Error analyzing audio: {str(e)}")
-        # Clean up any temporary files
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/analyze_typing', methods=['POST'])
-@check_initialization
-def analyze_typing_endpoint():
-    try:
-        typing_data = None
-        
-        # Process JSON data
-        if request.content_type and request.content_type.startswith('application/json'):
-            data = request.get_json(silent=True)
-            if data and ('keystrokes' in data or 'typing' in data):
-                typing_data = data.get('typing', data)  # Use 'typing' field if present, otherwise use entire payload
-            else:
-                print("No typing data found in JSON request")
-                return jsonify({'error': 'No typing data provided'}), 400
-        else:
-            print(f"Unsupported content type: {request.content_type}")
-            return jsonify({'error': f'Typing data must be provided as JSON'}), 400
-            
-        if not typing_data:
-            return jsonify({'error': 'Failed to process typing data'}), 400
-        
-        # Call ML models endpoint for typing analysis
-        ml_models_url = os.environ.get("ML_MODELS_URL", "http://localhost:9000")
-        
-        try:
-            # Make request to models service
-            response = requests.post(
-                f"{ml_models_url}/ml/process",
-                json={
-                    "url": typing_data,  # Pass the typing data directly
-                    "data_type": "typing",
-                    "model": "pattern"
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                analysis = response.json()
-                print(f"Typing analysis result: {analysis}")
-                return jsonify({
-                    'status': 'success',
-                    'analysis': analysis
-                })
-            else:
-                print(f"Error from ML service: {response.text}")
-                return jsonify({
-                    'status': 'error',
-                    'message': f"ML service returned error: {response.text}"
-                }), 500
-                
-        except requests.RequestException as e:
-            print(f"Error calling ML service: {str(e)}")
-            return jsonify({
-                'status': 'error',
-                'message': f"Failed to communicate with ML service: {str(e)}"
-            }), 500
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        app.logger.error(f"Error analyzing typing: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
 
 @app.route('/status', methods=['GET'])
 def get_status():

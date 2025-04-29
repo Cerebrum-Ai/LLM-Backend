@@ -18,73 +18,57 @@ import argparse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Default ngrok URLs - update these with your actual ngrok URLs
-LLM_SERVICE_URL = "https://example-llm-service.ngrok-free.app"
-ML_MODELS_URL = "https://example-ml-models.ngrok-free.app"
+# All LLM and typing analysis requests must go through the node_handler (not directly to chatbot or LLM)
+NODE_HANDLER_URL = os.environ.get("NODE_HANDLER_URL", "http://localhost:8000")
+
+print(f"Testing with URL:\n- Node Handler: {NODE_HANDLER_URL}")
 
 def test_llm_service_health():
-    """Test the health of the LLM service"""
-    url = f"{LLM_SERVICE_URL}/"
+    """Test the health of the LLM (node handler) service via /status endpoint"""
+    url = f"{NODE_HANDLER_URL}/status"
     print(f"\n\033[1m🔍 Testing LLM Service Health: {url}\033[0m")
     try:
         response = requests.get(url, timeout=10)
         print(f"Status code: {response.status_code}")
-        # For LLM service, a 404 is actually expected since there's no root endpoint
-        # We'll consider this a "pass" since we know the API endpoints work
-        if response.status_code == 404:
-            print("404 response is expected for LLM service root. This is normal.")
+        if response.status_code == 200:
+            print(f"Response: {response.json()}")
             return True
         else:
-            try:
-                print(f"Response: {response.json()}")
-            except:
-                print("Could not parse response as JSON")
-            return response.status_code == 200
+            print(f"Unexpected status code: {response.status_code}")
+            return False
     except Exception as e:
         print(f"Error: {str(e)}")
         return False
 
 def test_ml_models_health():
-    """Test the health of the ML Models service"""
-    url = f"{ML_MODELS_URL}/"
-    print(f"\n\033[1m🔍 Testing ML Models Service Health: {url}\033[0m")
+    """Test the health of the ML Models service via node handler"""
+    url = f"{NODE_HANDLER_URL}/ml/forward"
+    print(f"\n\033[1m🔍 Testing ML Models Service Health via Node Handler: {url}\033[0m")
+    # We'll send a minimal valid payload (simulate typing analysis health check)
+    payload = {
+        "url": {
+            "keystrokes": [],
+            "text": "health check"
+        },
+        "data_type": "typing",
+        "model": "pattern"
+    }
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)
         print(f"Status code: {response.status_code}")
-        
-        # Try to parse JSON response
         try:
-            if response.status_code == 200:
-                print(f"Response: {response.json()}")
-                return True
-            else:
-                # For ML service, we also consider 404 as a potential "pass"
-                # Let's check the /ml/process endpoint to see if service is alive
-                print(f"Checking if ML service is alive by testing /ml/process endpoint...")
-                test_payload = {
-                    "url": "test",
-                    "data_type": "typing",
-                    "model": "pattern"
-                }
-                test_response = requests.post(f"{ML_MODELS_URL}/ml/process", json=test_payload, timeout=5)
-                
-                # Even a 400 response means the service is up
-                if test_response.status_code in [200, 400]:
-                    print(f"ML service is running and responding to requests (status: {test_response.status_code})")
-                    return True
-                
-                print(f"ML service appears to be down (status: {test_response.status_code})")
-                return False
-        except Exception as e:
-            print(f"Could not parse response as JSON: {str(e)}")
-            return False
+            print(f"Response: {json.dumps(response.json(), indent=2)}")
+        except Exception:
+            print("Could not parse response as JSON")
+        return response.status_code in [200, 400]
     except Exception as e:
-        print(f"Error connecting to ML service: {str(e)}")
+        print(f"Error connecting to ML service via node handler: {str(e)}")
         return False
 
 def test_chat_endpoint():
-    """Test the chat endpoint"""
-    url = f"{LLM_SERVICE_URL}/api/chat"
-    print(f"\n\033[1m🔍 Testing Chat Endpoint: {url}\033[0m")
+    """Test the chat endpoint via node handler routing (text only)"""
+    url = f"{NODE_HANDLER_URL}/chat"
+    print(f"\n\033[1m🔍 Testing Chat Endpoint via Node Handler: {url}\033[0m")
     payload = {
         "question": "What are the symptoms of diabetes?",
         "session_id": f"test_{int(time.time())}"
@@ -93,6 +77,60 @@ def test_chat_endpoint():
         print("Sending request to chat endpoint (this may take up to 30 seconds)...")
         response = requests.post(url, json=payload, timeout=30)
         print(f"Status code: {response.status_code}")
+        try:
+            print(f"Response: {json.dumps(response.json(), indent=2)}")
+        except Exception:
+            print(f"Error: {response.text}")
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return False
+
+def test_chat_image():
+    """Test the chat endpoint with an image URL"""
+    url = f"{NODE_HANDLER_URL}/api/external/chat"
+    print(f"\n\033[1m🖼️ Testing Chat Endpoint with Image: {url}\033[0m")
+    # Use uploaded file URL if available
+    image_url = globals().get("IMAGE_FILE_URL") or "https://dermnetnz.org/assets/Uploads/site-age-specific/lowerleg9.jpg"
+    payload = {
+        "question": "What are the symptoms of diabetes?",
+        "image_url": image_url,
+        "session_id": f"test_image_{int(time.time())}"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=30)
+        print(f"Status code: {response.status_code}")
+        try:
+            print(f"Response: {json.dumps(response.json(), indent=2)}")
+        except Exception:
+            print(f"Error: {response.text}")
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return False
+
+def test_chat_audio():
+    """Test the chat endpoint with an audio URL"""
+    url = f"{NODE_HANDLER_URL}/api/external/chat"
+    print(f"\n\033[1m🔊 Testing Chat Endpoint with Audio: {url}\033[0m")
+    # Use uploaded file URL if available
+    audio_url = globals().get("AUDIO_FILE_URL") or "https://odgfmdbnjroqktddkgkz.supabase.co/storage/v1/object/sign/test/output10.wav?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InN0b3JhZ2UtdXJsLXNpZ25pbmcta2V5XzRmYjNjMTAyLTkzMGItNDdmMi1hMTllLTA2MDI5MmQxMjExNiJ9.eyJ1cmwiOiJ0ZXN0L291dHB1dDEwLndhdiIsImlhdCI6MTc0NTg4NDA4OSwiZXhwIjoxNzc3NDIwMDg5fQ.xFzuZ9pWI8y69SXywKxgM_JFkxV8CWWXxgc5VMqeT30"
+    payload = {
+        "question": "What are the symptoms of diabetes?",
+        "audio_url": audio_url,
+        "session_id": f"test_audio_{int(time.time())}"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=30)
+        print(f"Status code: {response.status_code}")
+        try:
+            print(f"Response: {json.dumps(response.json(), indent=2)}")
+        except Exception:
+            print(f"Error: {response.text}")
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return False
         print(f"Response: {json.dumps(response.json(), indent=2)}")
         return response.status_code == 200
     except requests.exceptions.Timeout:
@@ -102,64 +140,37 @@ def test_chat_endpoint():
         print(f"Error: {str(e)}")
         return False
 
-def test_typing_analysis():
-    """Test the typing analysis endpoint"""
-    url = f"{LLM_SERVICE_URL}/api/analyze_typing"
-    print(f"\n\033[1m🔍 Testing Typing Analysis Endpoint: {url}\033[0m")
-    
-    # Create typing data with enough keystrokes (at least 10)
-    keystrokes = []
-    for i in range(20):
-        keystrokes.append({
-            "key": chr(97 + (i % 26)),  # a-z characters
-            "timestamp": 1680000000 + (i * 100),
-            "timeDown": 1680000000 + (i * 100),
-            "timeUp": 1680000000 + (i * 100) + 50,
-            "event": "keydown"
-        })
-    
-    payload = {"keystrokes": keystrokes}
-    
-    try:
-        response = requests.post(url, json=payload, timeout=10)
-        print(f"Status code: {response.status_code}")
-        print(f"Response: {json.dumps(response.json(), indent=2)}")
-        return response.status_code == 200
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        return False
+
 
 def test_ml_process_typing():
-    """Test the ML process endpoint for typing data directly"""
-    url = f"{ML_MODELS_URL}/ml/process"
-    print(f"\n\033[1m🔍 Testing ML Process Endpoint (Typing): {url}\033[0m")
-    
+    """Test the ML process endpoint for typing data via node handler's /ml/forward"""
+    url = f"{NODE_HANDLER_URL}/ml/forward"
+    print(f"\n\033[1m🔍 Testing ML Process Endpoint (Typing) via Node Handler: {url}\033[0m")
     # Create typing data with enough keystrokes (at least 10)
     keystrokes = []
     for i in range(20):
         keystrokes.append({
             "key": chr(97 + (i % 26)),  # a-z characters
-            "timestamp": 1680000000 + (i * 100),
             "timeDown": 1680000000 + (i * 100),
             "timeUp": 1680000000 + (i * 100) + 50,
-            "event": "keydown"
+            "pressure": 1.0
         })
-    
     payload = {
-        "url": json.dumps({"keystrokes": keystrokes}),
+        "url": {
+            "keystrokes": keystrokes,
+            "text": "test typing"
+        },
         "data_type": "typing",
         "model": "pattern"
     }
-    
     try:
         response = requests.post(url, json=payload, timeout=10)
         print(f"Status code: {response.status_code}")
         if response.status_code in [200, 400]:
             try:
                 print(f"Response: {json.dumps(response.json(), indent=2)}")
-                # Even if we get an error response with valid JSON, the service is working
                 return True
-            except:
+            except Exception:
                 print("Could not parse response as JSON")
                 return False
         return False
@@ -176,7 +187,8 @@ def run_all_tests():
         "llm_health": test_llm_service_health(),
         "ml_health": test_ml_models_health(),
         "chat": test_chat_endpoint(),
-        "typing_analysis": test_typing_analysis(),
+        "chat_image": test_chat_image(),
+        "chat_audio": test_chat_audio(),
         "ml_process_typing": test_ml_process_typing()
     }
     
@@ -196,19 +208,14 @@ def run_all_tests():
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Test LLM-Backend endpoints')
-    parser.add_argument('llm_url', nargs='?', help='URL of the LLM service')
-    parser.add_argument('ml_url', nargs='?', help='URL of the ML Models service')
+    parser.add_argument('llm_url', nargs='?', help='URL of the Node Handler service')
     return parser.parse_args()
 
 if __name__ == "__main__":
+    
     args = parse_arguments()
-    
-    # Update URLs if provided as command line arguments
     if args.llm_url:
-        LLM_SERVICE_URL = args.llm_url
-    if args.ml_url:
-        ML_MODELS_URL = args.ml_url
-    
-    print(f"Testing with URLs:\n- LLM Service: {LLM_SERVICE_URL}\n- ML Models: {ML_MODELS_URL}")
+        NODE_HANDLER_URL = args.llm_url
+    print(f"Testing with URL:\n- Node Handler: {NODE_HANDLER_URL}")
     success = run_all_tests()
-    sys.exit(0 if success else 1) 
+    sys.exit(0 if success else 1)

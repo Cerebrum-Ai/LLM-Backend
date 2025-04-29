@@ -15,12 +15,8 @@ from pathlib import Path
 import json
 
 # Import ML models - audio processing is just one of potentially many ML types
-audio_processor_path = os.path.join(os.path.dirname(__file__), 'models', 'audio', 'emotion')
-typing_processor_path = os.path.join(os.path.dirname(__file__), 'models', 'typing', 'pattern')
-sys.path.append(audio_processor_path)
-sys.path.append(typing_processor_path)
-from audio_processor import SimpleAudioAnalyzer
-from typing_processor import KeystrokeProcessor
+from models.audio.emotion.audio_processor import SimpleAudioAnalyzer
+from models.typing.pattern.typing_processor import KeystrokeProcessor
 
 load_dotenv()
 
@@ -130,6 +126,41 @@ class MLModels:
     def _process_typing_pattern(cls, model_instance, typing_data):
         """Process typing data with pattern detection model"""
         try:
+            # Print detailed debug information about the input data
+            print(f"\n=== TYPING DATA DEBUG ===")
+            print(f"Type of typing_data: {type(typing_data)}")
+            
+            # Handle the specific data structure from the test script
+            # The test script sends data in format: {"url": {"keystrokes": [...], "text": "..."}, "data_type": "typing", "model": "pattern"}
+            if isinstance(typing_data, dict):
+                # First check if this is the complete request payload
+                if 'url' in typing_data and 'data_type' in typing_data and typing_data['data_type'] == 'typing':
+                    print("Found complete request payload, extracting typing data from 'url' field")
+                    if isinstance(typing_data['url'], dict) and 'keystrokes' in typing_data['url']:
+                        typing_data = typing_data['url']
+                    else:
+                        print(f"Warning: 'url' field does not contain expected typing data structure")
+                
+                print(f"Keys in typing_data: {list(typing_data.keys())}")
+                
+                if "keystrokes" in typing_data:
+                    keystrokes = typing_data["keystrokes"]
+                    print(f"Number of keystrokes: {len(keystrokes)}")
+                    if keystrokes:
+                        print(f"First keystroke: {keystrokes[0]}")
+                        print(f"Keys in first keystroke: {list(keystrokes[0].keys())}")
+                        
+                        # Convert press_time/release_time to timeDown/timeUp format for compatibility
+                        for keystroke in keystrokes:
+                            if "press_time" in keystroke and "timeDown" not in keystroke:
+                                keystroke["timeDown"] = keystroke["press_time"]
+                            if "release_time" in keystroke and "timeUp" not in keystroke:
+                                keystroke["timeUp"] = keystroke["release_time"]
+                        print(f"After conversion, first keystroke: {keystrokes[0]}")
+            else:
+                print(f"typing_data is not a dictionary: {typing_data}")
+            print(f"=== END DEBUG ===\n")
+            
             return model_instance.analyze_typing(typing_data)
         except Exception as e:
             print(f"Error processing typing: {str(e)}")
@@ -206,13 +237,66 @@ def deregister_from_node_handler():
     except Exception as e:
         print(f"Error deregistering: {str(e)}")
 
+def handle_node_handler_disconnect():
+    """Handle disconnection from node handler"""
+    print("Node handler disconnected. Attempting to reconnect...")
+    max_retries = 5
+    retry_delay = 2  # Start with 2 seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Try to reconnect
+            if register_with_node_handler():
+                print("Successfully reconnected to node handler")
+                return True
+            
+            # If registration failed, wait before retrying
+            print(f"Reconnection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)  # Cap at 30 seconds
+            
+        except Exception as e:
+            print(f"Error during reconnection attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)
+    
+    print("Failed to reconnect after multiple attempts")
+    return False
+
 def send_heartbeat():
+    """Send periodic heartbeat to node handler"""
     global current_ngrok_url
+    consecutive_failures = 0
+    max_consecutive_failures = 1  # Respond quickly to disconnections
+    reconnection_in_progress = False
+    
     while not shutdown_event.is_set():
         try:
-            requests.post(f"{NODE_HANDLER_URL}/heartbeat", json={"url": current_ngrok_url}, timeout=5)
+            if reconnection_in_progress:
+                time.sleep(HEARTBEAT_INTERVAL)
+                continue
+                
+            print("\nSending heartbeat to node handler...")
+            response = requests.post(
+                f"{NODE_HANDLER_URL}/heartbeat",
+                json={"url": current_ngrok_url},
+                timeout=5
+            )
+            if response.status_code != 200:
+                print(f"Heartbeat not acknowledged: {response.text}")
+            consecutive_failures = 0
         except Exception as e:
             print(f"Heartbeat error: {str(e)}")
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print("\n=== Node Handler Connection Lost ===")
+                print("Error detected. Starting reconnection process...")
+                reconnection_in_progress = True
+                if handle_node_handler_disconnect():
+                    consecutive_failures = 0
+                    reconnection_in_progress = False
+                    print("✓ Successfully reconnected to node handler")
         time.sleep(HEARTBEAT_INTERVAL)
 
 def handle_shutdown(signum, frame):
@@ -364,6 +448,15 @@ def process_ml_data():
                             else:
                                 raise ValueError(f"Invalid typing data source: {url}")
                     
+                    # Debug the typing data structure
+                    print(f"Received typing data in /ml/process: {json.dumps(typing_data)[:200]}...")
+                    
+                    # For typing data coming from the test script, we need to pass the entire request payload
+                    # The test script sends data in format: {"url": {"keystrokes": [...], "text": "..."}, "data_type": "typing", "model": "pattern"}
+                    if data_type == 'typing':
+                        print(f"Processing typing data with special handling for test script format")
+                        # We'll pass the entire request payload to the processor, which will handle the extraction
+                    
                     # Process with the appropriate model
                     print(f"Analyzing typing data")
                     result = MLModels.process('typing', model, typing_data)
@@ -468,5 +561,3 @@ if __name__ == '__main__':
     ngrok_thread.start()
     while not shutdown_event.is_set():
         time.sleep(1)
-
-        
