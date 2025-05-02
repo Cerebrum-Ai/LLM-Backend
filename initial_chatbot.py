@@ -184,7 +184,7 @@ def process_ml_data(data, data_type, model, ml_url=None):
                 "data_type": data_type,
                 "model": model
             },
-            timeout=10
+            timeout=40
         )
         
         # Clean up temp file if created
@@ -454,7 +454,7 @@ def register_with_node_handler():
         response = requests.post(
             f"{NODE_HANDLER_URL}/register",
             json={"url": current_ngrok_url, "type": "chatbot"},
-            timeout=5
+            timeout=15
         )
         if response.status_code == 200:
             print("Successfully registered with node handler")
@@ -474,7 +474,7 @@ def deregister_from_node_handler():
         
     try:
         print(f"Deregistering from node handler...")
-        requests.post(f"{NODE_HANDLER_URL}/deregister", json={"url": current_ngrok_url}, timeout=5)
+        requests.post(f"{NODE_HANDLER_URL}/deregister", json={"url": current_ngrok_url}, timeout=15)
     except Exception as e:
         print(f"Error deregistering: {str(e)}")
 
@@ -495,7 +495,7 @@ def send_heartbeat():
             response = requests.post(
                 f"{NODE_HANDLER_URL}/heartbeat",
                 json={"url": current_ngrok_url},
-                timeout=5
+                timeout=15
             )
             if response.status_code != 200:
                 print(f"Heartbeat not acknowledged: {response.text}")

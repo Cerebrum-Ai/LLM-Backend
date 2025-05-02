@@ -392,7 +392,7 @@ def notify_nodes_of_shutdown():
                 response = requests.post(
                     f"{node[0]}/deregister",
                     json={'url': node[0]},
-                    timeout=10  # Increased timeout to 10 seconds
+                    timeout=15  # Increased timeout to 10 seconds
                 )
                 if response.status_code in [200, 202]:  # Accept both success and pending responses
                     print(f"Node {node[0]} acknowledged shutdown")
@@ -608,7 +608,7 @@ def forward_ml_request():
                 'url': url,
                 'data_type': data_type,
                 'model': model
-            }, timeout=10)
+            }, timeout=20)
             return jsonify(response.json()), response.status_code
         finally:
             conn.close()
@@ -762,7 +762,7 @@ def handle_external_chat():
                 data=data,
                 files=files,
                 headers=headers,
-                timeout=30
+                timeout=90
             )
             
             # Clean up temporary files
@@ -776,7 +776,7 @@ def handle_external_chat():
                 f"{chatbot_node}/chat",
                 headers={**headers, 'Content-Type': request.content_type},
                 data=request.get_data(),
-                timeout=30
+                timeout=90
             )
         
         return Response(
