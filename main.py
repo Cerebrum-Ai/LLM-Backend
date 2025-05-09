@@ -18,6 +18,10 @@ import signal
 from waitress import serve
 import subprocess
 import tempfile
+from models.workflow.er_triage import ERTriageModel
+from models.workflow.lab_analysis import LabAnalysisModel
+from models.workflow.alert_system import AlertSystem
+from datetime import datetime
 
 load_dotenv()
 # Add these constants at the top of the file
@@ -54,6 +58,11 @@ llm_instance = None
 is_initialized = False
 vector_db_instance = None
 shutdown_event = Event()
+
+# Initialize workflow models
+er_triage_model = ERTriageModel()
+lab_analysis_model = LabAnalysisModel()
+alert_system = AlertSystem()
 
 def initialize_llm():
     global llm_instance, vector_db_instance, is_initialized
@@ -107,9 +116,6 @@ def init(state: State):
         state["session_id"] = session_id
         data = state.get("data", {})
         
-        # Get non-None keys for context
-        not_none_keys = [k for k, v in data.items() if v not in (None, "", [])]
-        
         # Extract ML results for LLM context
         ml_results = {}
         # Audio emotion (legacy)
@@ -119,11 +125,11 @@ def init(state: State):
         for ml_field in ["audio_ml", "typing_ml"]:  # skip image_ml and gait_ml
             if ml_field in data and data[ml_field] is not None:
                 ml_results[ml_field.replace('_ml', '')] = data[ml_field]
+        
         # Get initial diagnosis WITH audio and typing ML results
         initial_response = init_llm_input(
             question=state["question"],
             image=state.get("image"),
-            not_none_keys=not_none_keys,
             ml_results=ml_results if ml_results else None
         )
         
@@ -179,16 +185,22 @@ def generate(state: State):
         initial_diagnosis = state.get("initial_diagnosis", "")
         question = state.get("question", "")
         context = state.get("context", [])
-        # Use the full data and ml_results saved in state
-        not_none_keys_data = state.get("not_none_keys_data", state.get("data", {}))
-        ml_results = state.get("ml_results", {})
+        # Use audio, typing, and image ML results
+        ml_results = {}
+        data = state.get("data", {})
+        # Audio emotion (legacy)
+        if isinstance(data.get("audio"), dict) and "emotion" in data["audio"]:
+            ml_results["audio"] = data["audio"]["emotion"]
+        # Include audio_ml, typing_ml, and image_ml
+        for ml_field in ["audio_ml", "typing_ml", "image_ml"]:
+            if ml_field in data and data[ml_field] is not None:
+                ml_results[ml_field.replace('_ml', '')] = data[ml_field]
         
         # Call post_llm_input for final answer
         final_answer = post_llm_input(
             initial_diagnosis=initial_diagnosis,
             question=question,
             context=context,
-            not_none_keys_data=not_none_keys_data,
             ml_results=ml_results
         )
         
@@ -634,6 +646,132 @@ def wait_for_flask(port, max_retries=5):
             print(f"Waiting for Flask to start (attempt {i+1}/{max_retries})...")
             time.sleep(2)
     return False
+
+@app.route('/api/er/triage', methods=['POST'])
+@check_initialization
+def er_triage():
+    """Handle ER triage requests"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        # Extract required fields
+        vitals = data.get('vitals', {})
+        symptoms = data.get('symptoms', [])
+        medical_history = data.get('medical_history', {})
+        
+        # Validate required fields
+        if not vitals or not symptoms:
+            return jsonify({'error': 'Missing required fields (vitals, symptoms)'}), 400
+            
+        # Process triage
+        result = er_triage_model.assess_patient(vitals, symptoms, medical_history)
+        
+        # Check for critical findings and send alerts
+        if result.get('critical_findings'):
+            for finding in result['critical_findings']:
+                alert_system.send_alert(
+                    message=finding,
+                    level='CRITICAL',
+                    source='ER_TRIAGE',
+                    data={'vitals': vitals, 'symptoms': symptoms}
+                )
+                
+        return jsonify(result), 200
+        
+    except Exception as e:
+        print(f"Error in ER triage: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/lab/analyze', methods=['POST'])
+@check_initialization
+def lab_analysis():
+    """Handle lab result analysis requests"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        # Extract required fields
+        lab_results = data.get('results', {})
+        previous_results = data.get('previous_results', {})
+        
+        # Validate required fields
+        if not lab_results:
+            return jsonify({'error': 'Missing required field (results)'}), 400
+            
+        # Process lab results
+        result = lab_analysis_model.analyze_results(lab_results, previous_results)
+        
+        # Check for critical findings and send alerts
+        if result.get('critical_findings'):
+            for finding in result['critical_findings']:
+                alert_system.send_alert(
+                    message=finding['message'],
+                    level='CRITICAL',
+                    source='LAB_ANALYSIS',
+                    data={'test': finding['test'], 'value': finding['value']}
+                )
+                
+        return jsonify(result), 200
+        
+    except Exception as e:
+        print(f"Error in lab analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/alerts', methods=['GET'])
+@check_initialization
+def get_alerts():
+    """Get alert history with optional filtering"""
+    try:
+        # Get filter parameters
+        level = request.args.get('level')
+        source = request.args.get('source')
+        start_time = request.args.get('start_time')
+        end_time = request.args.get('end_time')
+        
+        # Convert time strings to datetime if provided
+        if start_time:
+            start_time = datetime.fromisoformat(start_time)
+        if end_time:
+            end_time = datetime.fromisoformat(end_time)
+            
+        # Get filtered alerts
+        alerts = alert_system.get_alert_history(
+            level=level,
+            source=source,
+            start_time=start_time,
+            end_time=end_time
+        )
+        
+        return jsonify({
+            'alerts': alerts,
+            'count': len(alerts)
+        }), 200
+        
+    except Exception as e:
+        print(f"Error getting alerts: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/alerts/clear', methods=['POST'])
+@check_initialization
+def clear_alerts():
+    """Clear alert history"""
+    try:
+        alert_system.clear_alert_history()
+        return jsonify({'message': 'Alert history cleared'}), 200
+    except Exception as e:
+        print(f"Error clearing alerts: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     try:

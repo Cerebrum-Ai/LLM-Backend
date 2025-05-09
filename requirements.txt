@@ -4,4 +4,8 @@ ngrok
 requests
 python-dotenv
 supabase
+numpy
+pandas
+scikit-learn
+joblib
 
