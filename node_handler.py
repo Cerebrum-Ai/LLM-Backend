@@ -586,7 +586,7 @@ def forward_ml_request():
 
     if not url or not data_type or not model:
         return jsonify({'error': 'Missing required fields (url, data_type, model)'}), 400
-    if data_type not in ['image', 'gait', 'audio', 'typing']:
+    if data_type not in ['image', 'gait', 'audio', 'typing', 'health']:
         return jsonify({'error': 'Invalid data_type'}), 400
 
     # Get an active ML node from the database
@@ -616,6 +616,56 @@ def forward_ml_request():
         return jsonify({'error': f'Failed to reach models node: {str(e)}'}), 502
     except Exception as e:
         app.logger.exception(f"Error in ML forward request: {str(e)}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+@app.route('/workflow/forward', methods=['POST'])
+def forward_workflow_request():
+    """
+    Forwards workflow model requests (ER Triage, Lab Analysis, ECG Analysis, Diabetes Prediction).
+    Expects JSON with: model, data.
+    """
+    data = request.get_json()
+    model = data.get('model')
+    workflow_data = data.get('data')
+
+    if not model or not workflow_data:
+        return jsonify({'error': 'Missing required fields (model, data)'}), 400
+    
+    valid_models = ['er_triage', 'lab_analysis', 'ecg_analysis', 'diabetes']
+    if model not in valid_models:
+        return jsonify({'error': f'Invalid model. Must be one of: {", ".join(valid_models)}'}), 400
+
+    # Get an active ML node from the database
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        try:
+            # Get the most recently active ML node
+            c.execute('SELECT url FROM nodes WHERE type = "ml" AND status = "active" ORDER BY last_heartbeat DESC LIMIT 1')
+            result = c.fetchone()
+            if not result:
+                return jsonify({'error': 'No active ML nodes available'}), 503
+            
+            ml_node_url = result[0]
+            print(f"Using ML node at: {ml_node_url}")
+            
+            # Forward request to the ML node's workflow endpoint
+            response = requests.post(f"{ml_node_url}/workflow/process", json={
+                'model': model,
+                'data': workflow_data
+            }, timeout=30)  # Longer timeout for workflow processing
+            
+            return jsonify({
+                'status': 'success',
+                'model': model,
+                'result': response.json()
+            }), response.status_code
+        finally:
+            conn.close()
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': f'Failed to reach models node: {str(e)}'}), 502
+    except Exception as e:
+        app.logger.exception(f"Error in workflow forward request: {str(e)}")
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 def get_active_chatbot_node():

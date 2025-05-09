@@ -13,11 +13,17 @@ import base64
 import subprocess
 from pathlib import Path
 import json
+import numpy as np
+import cv2
+import torch
 
 # Import ML models - audio processing is just one of potentially many ML types
 from models.audio.emotion.audio_processor import SimpleAudioAnalyzer
 from models.typing.pattern.typing_processor import KeystrokeProcessor
 from models.image.classification.medvit_classifier import MedViTClassifier
+from models.image.ecg.integration import ECG_FM_Handler
+from models.image.ecg.digitization import digitize_ecg_image
+from models.health.diabetes import diabetes_predictor
 
 load_dotenv()
 
@@ -52,20 +58,18 @@ class MLModels:
             'pattern': lambda: KeystrokeProcessor.get_instance()
         },
         'image': {
-            'classification': lambda: MedViTClassifier
+            'classification': lambda: MedViTClassifier,
+            'ecg': lambda: ECG_FM_Handler()
+        },
+        'health': {
+            'diabetes': lambda: diabetes_predictor if diabetes_predictor is not None else None
         }
-        # Add more model types and names here as they become available:
-        # 'image': {
-        #    'classification': lambda: ImageClassifier.get_instance()
-        # },
-        # 'text': {
-        #    'sentiment': lambda: SentimentAnalyzer.get_instance()
-        # }
     }
 
     @classmethod
     def initialize_all(cls):
         """Initialize all registered ML models"""
+        print("\n=== ML Model Initialization ===")
         print("Initializing all ML models...")
         
         # Check if FFmpeg is installed (needed for audio models)
@@ -76,21 +80,25 @@ class MLModels:
         
         # Iterate through all registered model types and models
         for model_type, models in cls._registry.items():
-            print(f"Initializing {model_type} models...")
+            print(f"\nInitializing {model_type} models...")
             for model_name, init_func in models.items():
                 total_models += 1
                 try:
                     print(f"  - Initializing {model_type}/{model_name} model...")
                     model_instance = init_func()
+                    if model_instance is None:
+                        print(f"  ✗ {model_type}/{model_name} model initialization returned None")
+                        continue
                     cls._instances[f"{model_type}/{model_name}"] = model_instance
-                    print(f"  {model_type}/{model_name} model initialized successfully")
+                    print(f"  ✓ {model_type}/{model_name} model initialized successfully")
+                    print(f"    Model type: {type(model_instance)}")
                     successful_inits += 1
                 except Exception as e:
-                    print(f"  Error initializing {model_type}/{model_name} model: {str(e)}")
+                    print(f"  ✗ Error initializing {model_type}/{model_name} model: {str(e)}")
                     import traceback
                     traceback.print_exc()
         
-        print(f"ML model initialization complete: {successful_inits}/{total_models} models initialized")
+        print(f"\nML model initialization complete: {successful_inits}/{total_models} models initialized")
         return successful_inits > 0  # Return True if at least one model was initialized
     
     @classmethod
@@ -102,9 +110,15 @@ class MLModels:
     @classmethod
     def process(cls, data_type, model, data):
         """Process data with the specified model type"""
+        print(f"\n=== MLModels.process ===")
+        print(f"Processing {data_type}/{model}")
+        
         model_instance = cls.get_model(data_type, model)
         if not model_instance:
+            print(f"Error: Model {data_type}/{model} not found or not initialized")
             return {"error": f"Model {data_type}/{model} not found or not initialized"}
+        
+        print(f"Found model instance: {type(model_instance)}")
         
         # Route to appropriate processing function based on model type
         if data_type == 'audio':
@@ -116,8 +130,13 @@ class MLModels:
         elif data_type == 'image':
             if model == 'classification':
                 return cls._process_image_classification(model_instance, data)
-        # Add more model type processors as they become available
+            elif model == 'ecg':
+                return cls._process_ecg_classification(model_instance, data)
+        elif data_type == 'health':
+            if model == 'diabetes':
+                return cls._process_diabetes_prediction(model_instance, data)
         
+        print(f"Error: Processing for {data_type}/{model} not implemented")
         return {"error": f"Processing for {data_type}/{model} not implemented"}
     
     @classmethod
@@ -198,6 +217,141 @@ class MLModels:
             return model_instance.analyze_typing(typing_data)
         except Exception as e:
             print(f"Error processing typing: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
+
+    @classmethod
+    def _process_ecg_classification(cls, model_instance, data):
+        """Process ECG data with ECG-FM model"""
+        try:
+            print("\n=== ECG Processing Debug ===")
+            print(f"Model instance type: {type(model_instance)}")
+            print(f"Input data: {data}")
+            
+            from models.image.ecg.digitization import digitize_ecg_image
+            import tempfile
+            
+            # Handle different input formats
+            if isinstance(data, dict):
+                if 'url' in data:
+                    print(f"Processing URL: {data['url']}")
+                    # Handle URL input
+                    response = requests.get(data['url'])
+                    response.raise_for_status()
+                    print(f"Successfully downloaded image, size: {len(response.content)} bytes")
+                    
+                    # Save image to temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                        temp_path = temp_file.name
+                        temp_file.write(response.content)
+                        print(f"Saved image to: {temp_path}")
+                    
+                    try:
+                        # Convert image to ECG signal
+                        print("Starting digitization...")
+                        digitized_data = digitize_ecg_image(temp_path)
+                        print(f"Digitization complete. Signal shape: {digitized_data['signal'].shape}")
+                        
+                        # Process with ML model
+                        print("Processing with ML model...")
+                        results = model_instance.process_ecg(
+                            digitized_data['signal'],
+                            digitized_data['text_description']
+                        )
+                        print(f"ML model results: {results}")
+                        
+                        # Format the results
+                        class_names = model_instance.get_class_names()
+                        formatted_results = {
+                            'prediction': class_names[results['prediction']],
+                            'probabilities': {
+                                class_name: float(prob)
+                                for class_name, prob in zip(class_names, results['probabilities'])
+                            },
+                            'segment_predictions': [class_names[p] for p in results['segment_predictions']],
+                            'segment_probabilities': [
+                                {class_name: float(prob) for class_name, prob in zip(class_names, probs)}
+                                for probs in results['segment_probabilities']
+                            ]
+                        }
+                        print(f"Formatted results: {formatted_results}")
+                        return formatted_results
+                        
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                            print(f"Cleaned up temporary file: {temp_path}")
+                            
+                elif 'signal' in data:
+                    print("Processing direct signal input...")
+                    # Handle direct signal input
+                    ecg_signal = data['signal']
+                    text_description = data.get('text_description', 'ECG recording with 12 leads.')
+                    
+                    # Process with ML model
+                    results = model_instance.process_ecg(ecg_signal, text_description)
+                    
+                    # Format the results
+                    class_names = model_instance.get_class_names()
+                    formatted_results = {
+                        'prediction': class_names[results['prediction']],
+                        'probabilities': {
+                            class_name: float(prob)
+                            for class_name, prob in zip(class_names, results['probabilities'])
+                        },
+                        'segment_predictions': [class_names[p] for p in results['segment_predictions']],
+                        'segment_probabilities': [
+                            {class_name: float(prob) for class_name, prob in zip(class_names, probs)}
+                            for probs in results['segment_probabilities']
+                        ]
+                    }
+                    return formatted_results
+                else:
+                    print("Invalid data format: missing 'url' or 'signal' key")
+                    return {"error": "Invalid data format. Expected 'url' or 'signal' key"}
+            else:
+                print(f"Invalid data type: {type(data)}")
+                return {"error": "Invalid data format. Expected dict with 'url' or 'signal', or array"}
+            
+        except Exception as e:
+            print(f"Error processing ECG data: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
+
+    @classmethod
+    def _process_diabetes_prediction(cls, model_instance, data):
+        """Process health data with diabetes prediction model"""
+        try:
+            if not isinstance(data, dict):
+                return {"error": "Input data must be a dictionary"}
+            
+            # Extract data from the 'url' field
+            if 'url' in data:
+                data = data['url']
+            
+            # Handle case-insensitive field names
+            if 'HbA1c_level' in data:
+                data['hba1c_level'] = data.pop('HbA1c_level')
+            
+            # Validate required fields
+            required_fields = [
+                'gender', 'age', 'hypertension', 'heart_disease',
+                'smoking_history', 'bmi', 'hba1c_level', 'blood_glucose_level'
+            ]
+            
+            missing_fields = [field for field in required_fields if field not in data]
+            if missing_fields:
+                return {"error": f"Missing required fields: {', '.join(missing_fields)}"}
+            
+            # Make prediction
+            result = model_instance.predict(data)
+            return result
+            
+        except Exception as e:
+            print(f"Error processing diabetes prediction: {str(e)}")
             import traceback
             traceback.print_exc()
             return {"error": str(e)}
@@ -403,146 +557,63 @@ def root():
     })
 
 @app.route('/ml/process', methods=['POST'])
-def process_ml_data():
-    """
-    Accepts a JSON payload with:
-      - url: str (URL to data)
-      - data_type: str (one of: image, gait, audio, typing)
-      - model: str (name of ML model to use)
-    """
-    data = request.get_json()
-    url = data.get('url')
-    data_type = data.get('data_type')
-    model = data.get('model')
-
-    # Validate input
-    if not url or not data_type or not model:
-        return jsonify({'error': 'Missing required fields (url, data_type, model)'}), 400
-    if data_type not in ['image', 'gait', 'audio', 'typing']:
-        return jsonify({'error': 'Invalid data_type'}), 400
-
-    # Process based on data type
-    result = {}
-    
+def process_ml_request():
+    """Process ML data with the specified model"""
     try:
-        # Check if this is a file URL or a data URL
-        if data_type == 'audio':
-            print(f"Processing audio data with model: {model}")
-            
-            try:
-                # Fetch the audio data from the URL
-                try:
-                    audio_data = requests.get(url).content
-                    
-                    # Save to a temporary file
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                        temp_path = temp_file.name
-                        temp_file.write(audio_data)
-                    
-                    try:
-                        # Process with the appropriate model
-                        print(f"Analyzing audio from {temp_path}")
-                        result = MLModels.process('audio', model, temp_path)
-                    finally:
-                        # Clean up
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
-                            
-                except requests.RequestException as e:
-                    print(f"Error fetching audio from URL: {str(e)}")
-                    result = {"error": f"Could not fetch audio from URL: {str(e)}", "detected_emotion": "unknown"}
-            except Exception as e:
-                print(f"Error processing audio: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                result = {"error": str(e), "detected_emotion": "unknown"}
-        elif data_type == 'typing':
-            print(f"Processing typing data with model: {model}")
-            
-            try:
-                # Process typing data (either JSON string or direct object)
-                try:
-                    # Determine if data is direct object or JSON string
-                    if isinstance(url, str) and url.startswith('{'):
-                        # It's a JSON string
-                        typing_data = json.loads(url)
-                    elif isinstance(url, dict):
-                        # Already a dict object
-                        typing_data = url
-                    else:
-                        # Assume it's a URL with data
-                        try:
-                            response = requests.get(url)
-                            typing_data = response.json()
-                        except:
-                            # Try as file path
-                            if os.path.exists(url):
-                                with open(url, 'r') as f:
-                                    typing_data = json.load(f)
-                            else:
-                                raise ValueError(f"Invalid typing data source: {url}")
-                    
-                    # Debug the typing data structure
-                    print(f"Received typing data in /ml/process: {json.dumps(typing_data)[:200]}...")
-                    
-                    # For typing data coming from the test script, we need to pass the entire request payload
-                    # The test script sends data in format: {"url": {"keystrokes": [...], "text": "..."}, "data_type": "typing", "model": "pattern"}
-                    if data_type == 'typing':
-                        print(f"Processing typing data with special handling for test script format")
-                        # We'll pass the entire request payload to the processor, which will handle the extraction
-                    
-                    # Process with the appropriate model
-                    print(f"Analyzing typing data")
-                    result = MLModels.process('typing', model, typing_data)
-                except requests.RequestException as e:
-                    print(f"Error fetching typing data: {str(e)}")
-                    result = {"error": f"Could not fetch typing data: {str(e)}"}
-                except json.JSONDecodeError as e:
-                    print(f"Error parsing typing data JSON: {str(e)}")
-                    result = {"error": f"Invalid JSON format: {str(e)}"}
-            except Exception as e:
-                print(f"Error processing typing: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                result = {"error": str(e)}
-        elif data_type == 'image':
-            if model == 'classification':
-                # Fetch the image data from the URL
-                try:
-                    image_data = requests.get(url).content
-                except requests.RequestException as e:
-                    print(f"Error fetching image data: {str(e)}")
-                    result = {"error": f"Could not fetch image data: {str(e)}"}
-                    return result
-                
-                # Write image bytes to a temporary file and pass the file path to the model
-                temp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
-                        temp_path = temp_file.name
-                        temp_file.write(image_data)
-                    print(f"Processing image classification using temp file: {temp_path}")
-                    result = MLModels.process('image', model, temp_path)
-                finally:
-                    if temp_path and os.path.exists(temp_path):
-                        os.remove(temp_path)
-        else:
-            # Other data type handling will be added here as models are implemented
-            print(f"Received ML request for unimplemented data type: {data_type}/{model}")
-            result = {
-                'status': 'error',
-                'message': f'Processing for {data_type}/{model} not implemented yet',
-                'url': url,
-                'data_type': data_type,
-                'model': model
-            }
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        url = data.get('url')
+        data_type = data.get('data_type')
+        model = data.get('model')
+
+        if not url or not data_type or not model:
+            return jsonify({'error': 'Missing required fields (url, data_type, model)'}), 400
+
+        # Process the request using MLModels class
+        result = MLModels.process(data_type, model, url)
+        return jsonify(result)
     except Exception as e:
-        print(f"Unexpected error in ML processing: {str(e)}")
+        print(f"Error processing ML request: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/workflow/process', methods=['POST'])
+def process_workflow_request():
+    """Process workflow model requests (ER Triage, Lab Analysis, ECG Analysis, Diabetes Prediction)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        model = data.get('model')
+        workflow_data = data.get('data')
+
+        if not model or not workflow_data:
+            return jsonify({'error': 'Missing required fields (model, data)'}), 400
+
+        # Process based on model type
+        if model == 'er_triage':
+            from models.workflow.er_triage import ERTriageModel
+            result = ERTriageModel().process(workflow_data)
+        elif model == 'lab_analysis':
+            from models.workflow.lab_analysis import LabAnalysisModel
+            result = LabAnalysisModel().process(workflow_data)
+        elif model == 'ecg_analysis':
+            from models.image.ecg.integration import ECG_FM_Handler
+            result = ECG_FM_Handler().process_ecg(workflow_data['ecg_signal'], workflow_data.get('text_description', ''))
+        elif model == 'diabetes':
+            from models.health.diabetes import diabetes_predictor
+            result = diabetes_predictor.predict(workflow_data)
+        else:
+            return jsonify({'error': f'Invalid model: {model}'}), 400
+
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error processing workflow request: {str(e)}")
         import traceback
         traceback.print_exc()
-        result = {"error": str(e)}
-
-    return jsonify(result), 200
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/deregister', methods=['POST'])
 def handle_deregister():

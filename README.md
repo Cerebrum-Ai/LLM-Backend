@@ -6,7 +6,8 @@ This repository contains the backend code for Cerebrum AI's LLM-powered multimod
 
 The system consists of two main components that work together:
 
-1. **Main LLM Service (main.py)**: 
+1. **Main LLM Service (main.py)**:
+
    - Handles large language model processing
    - Provides vector database lookups for medical knowledge
    - Coordinates multimodal inputs (text, audio, typing patterns)
@@ -14,19 +15,48 @@ The system consists of two main components that work together:
    - Provides a comprehensive API for health analysis
 
 2. **ML Models Service (models.py)**:
+
    - Provides specialized machine learning capabilities
    - Currently includes:
      - Audio emotion analysis model
      - Keystroke pattern analysis for neurological screening
-     - [In progress] Image classification/analysis models for medical imaging
+     - Image classification/analysis models for medical imaging
+     - Diabetes prediction model for health risk assessment
+     - ECG analysis model for heart condition detection
 
 3. **Performance Monitoring System (monitor.py)**:
+
    - Monitors the health and performance of all services (LLM, ML models, node handler)
    - Tracks API endpoint response times and verifies correct payloads for each route
    - Monitors system resource usage
    - Provides a real-time dashboard
    - Logs issues and errors for troubleshooting
    - Automatically manages service startup/shutdown and triggers alerts for endpoint failures or threshold violations
+
+4. **Workflow Models**:
+
+   - **ER Triage Model (er_triage.py)**:
+
+     - Patient assessment and prioritization system
+     - Assigns triage levels (RESUSCITATION to NON-URGENT)
+     - Analyzes vital signs and symptoms
+     - Generates critical findings and recommendations
+     - Integrates with alert system for urgent cases
+
+   - **Lab Analysis Model (lab_analysis.py)**:
+
+     - Comprehensive laboratory result analysis
+     - Reference range validation for common tests
+     - Trend analysis for sequential results
+     - Critical value detection and alerting
+     - Automated recommendations based on findings
+
+   - **Alert System (alert_system.py)**:
+     - Multi-channel alert management (console, email, Slack, pager)
+     - Configurable alert levels and priorities
+     - Rate limiting and cooldown periods
+     - Alert history tracking and filtering
+     - Integration with other workflow models
 
 ## Prerequisites
 
@@ -44,26 +74,32 @@ The system consists of two main components that work together:
 ### 1. Clone and Environment Setup
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/Cerebrum-Ai/LLM-Backend.git
    cd LLM-Backend
    ```
 
 2. Create and activate conda environment or using python virtual environment:
-  - Using conda:
-   ```bash
-   conda create -n aventus python=3.11
-   conda activate aventus
-   ```
-  - Using python virtual environment:
-   ```bash
-   python -m venv aventus
-   source aventus/bin/activate  # On Windows use `aventus\Scripts\activate`
-   ```
-  
+
+- Using conda:
+
+```bash
+conda create -n aventus python=3.11
+conda activate aventus
+```
+
+- Using python virtual environment:
+
+```bash
+python -m venv aventus
+source aventus/bin/activate  # On Windows use `aventus\Scripts\activate`
+```
+
 3. Install basic dependencies:
+
    ```bash
-   pip install -r requirements_main.txt 
+   pip install -r requirements_main.txt
    ```
 
 4. Install the LLama-cpp-python library with specific optimizations:
@@ -75,10 +111,11 @@ The system consists of two main components that work together:
      ```bash
      CMAKE_ARGS="-DGGML_CUDA=on -DGGML_CUDA_FORCE_CUBLAS=on -DLLAVA_BUILD=off -DCMAKE_CUDA_ARCHITECTURES=native" FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
      ```
-  - For Linux / Windows without CUDA support:
-     ```bash
-     pip install llama-cpp-python
-     ```
+
+- For Linux / Windows without CUDA support:
+  ```bash
+  pip install llama-cpp-python
+  ```
 
 5. Install ngrok:
    ```bash
@@ -88,17 +125,21 @@ The system consists of two main components that work together:
 ### 2. Model Setup
 
 1. Download the required LLM models and place them in the project root:
+
    - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (~4.8GB)
-      'https://huggingface.co/TheBloke/Bio-Medical-MultiModal-Llama-3-8B-V1-Q4_K_M-GGUF/resolve/main/Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf'
+     'https://huggingface.co/TheBloke/Bio-Medical-MultiModal-Llama-3-8B-V1-Q4_K_M-GGUF/resolve/main/Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf'
    - `phi-2.Q5_K_M.gguf` (~2.2GB)
-      'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q5_K_M.gguf'
-   You can download these from Hugging Face and then place in the folder created
+     'https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q5_K_M.gguf'
+     You can download these from Hugging Face and then place in the folder created
 
 2. Initialize the vector database:
+
    ```bash
-   
+
    ```
+
    Run all cells to:
+
    - Process the medical data from `medical_data.csv`
    - Create embeddings stored in `medical_data_embeddings.pkl`
    - Verify LLM models are working correctly
@@ -106,6 +147,7 @@ The system consists of two main components that work together:
 ## Example API Input/Output
 
 ### Example Request (JSON)
+
 ```
 POST /api/external/chat
 Content-Type: application/json
@@ -118,6 +160,7 @@ Content-Type: application/json
 ```
 
 ### Example Response (JSON)
+
 ```
 {
   "analysis": {
@@ -147,6 +190,58 @@ Content-Type: application/json
 }
 ```
 
+### Diabetes Prediction API
+
+The system includes a diabetes prediction model that can assess diabetes risk based on various health parameters.
+
+#### Example Request
+
+```bash
+curl -X POST http://localhost:9000/ml/process \
+-H "Content-Type: application/json" \
+-d '{
+  "data_type": "health",
+  "model": "diabetes",
+  "url": {
+    "gender": "Male",
+    "age": 45,
+    "hypertension": 0,
+    "heart_disease": 0,
+    "smoking_history": "never",
+    "bmi": 25.5,
+    "HbA1c_level": 5.7,
+    "blood_glucose_level": 120
+  }
+}'
+```
+
+#### Required Parameters
+
+- `gender`: String ("Male" or "Female")
+- `age`: Integer (age in years)
+- `hypertension`: Integer (0 or 1)
+- `heart_disease`: Integer (0 or 1)
+- `smoking_history`: String (e.g., "never", "former", "current")
+- `bmi`: Float (Body Mass Index)
+- `HbA1c_level`: Float (Glycated hemoglobin level)
+- `blood_glucose_level`: Integer (Blood glucose level in mg/dL)
+
+#### Example Response
+
+```json
+{
+  "prediction": 0,
+  "probability": 0.15,
+  "risk_level": "Low"
+}
+```
+
+The response includes:
+
+- `prediction`: Binary outcome (0 for no diabetes, 1 for diabetes)
+- `probability`: Probability of diabetes (0 to 1)
+- `risk_level`: Categorical risk assessment ("Low", "Medium", "High")
+
 ### 3. Environment Variables
 
 Create a `.env` file in the project root with the following variables:
@@ -174,6 +269,7 @@ MAIN_PORT=5050
 ```
 
 You can use the `env_example` file as a template:
+
 ```bash
 cp env_example .env
 ```
@@ -185,13 +281,14 @@ Then edit the `.env` file to add your specific tokens and URLs.
 We've included convenience scripts to start and stop the services:
 
 1. Make the scripts executable:
+
    ```bash
    cd runner
    python monitor.py --auto-start #might show typing_service is failing but its redundant
    ```
 
 2. To stop all services:
-  Close monitor.py and run
+   Close monitor.py and run
    ```bash
    ./stop_services.sh
    ```
@@ -201,6 +298,7 @@ We've included convenience scripts to start and stop the services:
 If you prefer to start the services manually:
 
 1. Start the ML Models Service:
+
    ```bash
    conda activate aventus
    python models.py
@@ -228,7 +326,8 @@ If you prefer to start the services manually:
 
 The system uses two primary LLM models:
 
-1. **Bio-Medical-MultiModal-Llama-3-8B-V1**: 
+1. **Bio-Medical-MultiModal-Llama-3-8B-V1**:
+
    - Specialized for medical knowledge and diagnostics
    - Used for the primary health analysis
    - Processes both text and image inputs
@@ -254,7 +353,7 @@ The audio emotion model analyzes voice recordings to detect emotional states:
   - Angry
   - Neutral
   - Fear
-- **Input Format**: WAV audio files 
+- **Input Format**: WAV audio files
 
 ### 3. Keystroke Pattern Analysis Model
 
@@ -277,6 +376,46 @@ The keystroke pattern model analyzes typing patterns to screen for potential neu
 - **Requirements**: Minimum 10 keystrokes for analysis
 - **Input Format**: JSON keystroke data with timestamps
 
+### 4. ECG Analysis Model
+
+The ECG analysis model processes electrocardiogram data to detect various heart conditions:
+
+- **Implementation**: `ECGAnalyzer` class in `models/health/ecg/ecg_analyzer.py`
+- **Features Analyzed**:
+  - Heart rate and rhythm
+  - P-wave morphology
+  - QRS complex characteristics
+  - ST segment changes
+  - T-wave abnormalities
+- **Conditions Detected**:
+  - Normal sinus rhythm
+  - Atrial fibrillation
+  - Ventricular tachycardia
+  - Myocardial infarction
+  - Bundle branch blocks
+- **Input Format**:
+  - Raw ECG signal data (numpy array)
+  - Standard 12-lead ECG recordings
+  - Single-lead ECG data
+- **Output Format**:
+  ```json
+  {
+    "prediction": "atrial_fibrillation",
+    "probability": 0.85,
+    "confidence": 0.92,
+    "rhythm_analysis": {
+      "heart_rate": 85,
+      "rhythm_type": "irregular",
+      "p_wave_present": false
+    },
+    "waveform_analysis": {
+      "qrs_duration": 0.08,
+      "st_elevation": 0.0,
+      "t_wave_inversion": false
+    }
+  }
+  ```
+
 ## API Reference
 
 ### Main LLM Service Endpoints
@@ -290,6 +429,7 @@ Processes natural language queries with optional multimodal inputs.
 **Content-Type**: `application/json` or `multipart/form-data`
 
 **JSON Request Format**:
+
 ```json
 {
   "question": "What are the symptoms of diabetes?",
@@ -307,6 +447,7 @@ Processes natural language queries with optional multimodal inputs.
 ```
 
 **Form Data Request Format**:
+
 ```
 question: What are the symptoms of diabetes?
 image: [file upload]
@@ -314,6 +455,7 @@ audio: [file upload]
 ```
 
 **Response Format**:
+
 ```json
 {
   "status": "success",
@@ -326,6 +468,7 @@ audio: [file upload]
 ```
 
 **Example Curl Command**:
+
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
@@ -333,15 +476,15 @@ curl -X POST \
   https://your-llm-service-ngrok-url.ngrok-free.app/api/chat
 ```
 
-
 ### ML Models Service Endpoints
 
 #### 1. Health Check Endpoint
 
 **Endpoint**: `/`  
-**Method**: GET  
+**Method**: GET
 
 **Response Format**:
+
 ```json
 {
   "status": "ok",
@@ -351,6 +494,7 @@ curl -X POST \
 ```
 
 **Example Curl Command**:
+
 ```bash
 curl https://your-models-service-ngrok-url.ngrok-free.app/
 ```
@@ -364,6 +508,7 @@ Generic endpoint for all machine learning models (audio, typing, and soon image)
 **Content-Type**: `application/json`
 
 **Request Format**:
+
 ```json
 {
   "url": "path_to_data_or_json_string_or_base64",
@@ -377,6 +522,7 @@ Generic endpoint for all machine learning models (audio, typing, and soon image)
 - For image: `url` will be a URL, file path, or base64 string (see upcoming image model section).
 
 **Response Format** (audio/emotion):
+
 ```json
 {
   "detected_emotion": "happy|sad|angry|neutral|fear",
@@ -392,6 +538,7 @@ Generic endpoint for all machine learning models (audio, typing, and soon image)
 ```
 
 **Response Format** (typing/pattern):
+
 ```json
 {
   "detected_condition": "parkinsons|essential_tremor|carpal_tunnel|multiple_sclerosis|normal",
@@ -411,6 +558,7 @@ Generic endpoint for all machine learning models (audio, typing, and soon image)
 ```
 
 **Response Format** (image/classification, coming soon):
+
 ```json
 {
   "detected_condition": "covid|pneumonia|normal|other",
@@ -428,6 +576,7 @@ Generic endpoint for all machine learning models (audio, typing, and soon image)
 ```
 
 **Example Curl Command (image, coming soon):**
+
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
@@ -435,49 +584,216 @@ curl -X POST \
   https://your-models-service-ngrok-url.ngrok-free.app/ml/process
 ```
 
-## Node Handler API Reference
+### Workflow Models API Reference
 
-The Node Handler service provides unified routing and orchestration for all backend nodes (LLM, ML, Chatbot). Use these endpoints to interact with the system for routing, direct node calls, and status checks.
+#### 1. ER Triage Endpoint
 
-### 1. Initial Chatbot Routing (Default Chat Entry)
-Forwards chat requests to the least-loaded available **chatbot** node (typically `initial_chatbot.py`).
+Processes patient data for emergency room triage assessment.
 
-- **Endpoint:** `/api/external/chat`
-- **Method:** POST
-- **Content-Type:** `application/json` or `multipart/form-data`
-- **Request Example:**
-  ```json
-  {
-    "question": "What are the symptoms of diabetes?",
-    "session_id": "optional_session_id",
-    "image": "optional_base64_encoded_image",
-    "audio": "optional_base64_encoded_audio",
-    "typing": { "keystrokes": [ ... ] }
+**Endpoint**: `/api/er/triage`  
+**Method**: POST  
+**Content-Type**: `application/json`
+
+**Request Format**:
+
+```json
+{
+  "vitals": {
+    "heart_rate": 120,
+    "blood_pressure_systolic": 140,
+    "blood_pressure_diastolic": 90,
+    "oxygen_saturation": 95,
+    "temperature": 37.2
+  },
+  "symptoms": ["chest pain", "shortness of breath", "dizziness"],
+  "medical_history": {
+    "previous_conditions": ["hypertension", "diabetes"],
+    "medications": ["aspirin", "metformin"],
+    "allergies": ["penicillin"]
   }
-  ```
-- **Curl Example:**
-  ```bash
-  curl -X POST -H "Content-Type: application/json" \
-    -d '{"question": "What are the symptoms of diabetes?"}' \
-    https://your-node-handler.ngrok-free.app/api/external/chat
-  ```
+}
+```
 
-### 2. Direct LLM Call (Main LLM Service)
-Forwards chat requests directly to the **LLM node** (typically `main.py`), bypassing chatbot orchestration.
+**Response Format**:
 
-- **Endpoint:** `/api/chat` or `/chat`
-- **Method:** POST
-- **Content-Type:** `application/json` or `multipart/form-data`
-- **Request Example:** (same as above)
-- **Curl Example:**
-  ```bash
-  curl -X POST -H "Content-Type: application/json" \
-    -d '{"question": "What is diabetes?",
-          "image": "image_url", }' \
-    https://your-node-handler.ngrok-free.app/api/chat
-  ```
+```json
+{
+  "triage_level": "URGENT",
+  "severity_score": 6.5,
+  "recommendations": [
+    "Immediate medical attention required",
+    "Prepare ECG and cardiac monitoring",
+    "Monitor vital signs every 15 minutes"
+  ],
+  "timestamp": "2024-03-14T10:30:00Z",
+  "critical_findings": ["Possible acute coronary syndrome"]
+}
+```
+
+**Example Curl Command**:
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vitals": {
+      "heart_rate": 120,
+      "blood_pressure_systolic": 140,
+      "oxygen_saturation": 95
+    },
+    "symptoms": ["chest pain", "shortness of breath"]
+  }' \
+  https://your-llm-service-ngrok-url.ngrok-free.app/api/er/triage
+```
+
+#### 2. Lab Analysis Endpoint
+
+Analyzes laboratory test results and provides interpretation.
+
+**Endpoint**: `/api/lab/analyze`  
+**Method**: POST  
+**Content-Type**: `application/json`
+
+**Request Format**:
+
+```json
+{
+  "results": {
+    "WBC": 11.5,
+    "RBC": 4.8,
+    "HGB": 14.2,
+    "PLT": 250,
+    "NA": 140,
+    "K": 4.0,
+    "GLU": 95,
+    "TROP": 0.02,
+    "BNP": 80
+  },
+  "previous_results": {
+    "WBC": [
+      { "value": 10.2, "timestamp": "2024-03-01T10:00:00Z" },
+      { "value": 9.8, "timestamp": "2024-02-15T10:00:00Z" }
+    ],
+    "HGB": [
+      { "value": 13.8, "timestamp": "2024-03-01T10:00:00Z" },
+      { "value": 13.5, "timestamp": "2024-02-15T10:00:00Z" }
+    ]
+  }
+}
+```
+
+**Response Format**:
+
+```json
+{
+  "current_analysis": {
+    "WBC": {
+      "value": 11.5,
+      "unit": "10^9/L",
+      "reference_range": "4.5-11.0",
+      "status": "HIGH"
+    },
+    "HGB": {
+      "value": 14.2,
+      "unit": "g/dL",
+      "reference_range": "13.5-17.5",
+      "status": "NORMAL"
+    }
+  },
+  "trend_analysis": {
+    "WBC": {
+      "current_value": 11.5,
+      "previous_value": 10.2,
+      "trend": "INCREASING",
+      "percent_change": 12.7
+    }
+  },
+  "critical_findings": [],
+  "recommendations": [
+    "Consider evaluation for possible infection due to elevated WBC"
+  ],
+  "timestamp": "2024-03-14T10:30:00Z"
+}
+```
+
+**Example Curl Command**:
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "results": {
+      "WBC": 11.5,
+      "HGB": 14.2,
+      "TROP": 0.02
+    }
+  }' \
+  https://your-llm-service-ngrok-url.ngrok-free.app/api/lab/analyze
+```
+
+#### 3. Alerts Endpoint
+
+Retrieves and manages system alerts.
+
+**Endpoint**: `/api/alerts`  
+**Method**: GET  
+**Query Parameters**:
+
+- `level`: Filter by alert level (CRITICAL, HIGH, MEDIUM, LOW)
+- `source`: Filter by alert source
+- `start_time`: Filter by start time (ISO format)
+- `end_time`: Filter by end time (ISO format)
+
+**Response Format**:
+
+```json
+{
+  "alerts": [
+    {
+      "message": "Severe tachycardia detected",
+      "level": "CRITICAL",
+      "source": "ER_TRIAGE",
+      "timestamp": "2024-03-14T10:30:00Z",
+      "data": {
+        "vitals": {
+          "heart_rate": 150
+        }
+      }
+    }
+  ],
+  "count": 1
+}
+```
+
+**Example Curl Command**:
+
+```bash
+curl "https://your-llm-service-ngrok-url.ngrok-free.app/api/alerts?level=CRITICAL&source=ER_TRIAGE"
+```
+
+#### 4. Clear Alerts Endpoint
+
+Clears the alert history.
+
+**Endpoint**: `/api/alerts/clear`  
+**Method**: POST
+
+**Response Format**:
+
+```json
+{
+  "message": "Alert history cleared"
+}
+```
+
+**Example Curl Command**:
+
+```bash
+curl -X POST https://your-llm-service-ngrok-url.ngrok-free.app/api/alerts/clear
+```
 
 ### 3. Direct ML Call (ML Forwarding)
+
 Forwards ML requests (audio, typing, image) to the ML node.
 
 - **Endpoint:** `/ml/forward`
@@ -498,25 +814,134 @@ Forwards ML requests (audio, typing, image) to the ML node.
     https://your-node-handler.ngrok-free.app/ml/forward
   ```
 
-### 4. Status Call (Node Handler Health)
-Returns the health/status of the node handler and registered nodes.
+### 4. Workflow Models Forwarding
 
-- **Endpoint:** `/status`
-- **Method:** GET
-- **Curl Example:**
-  ```bash
-  curl https://your-node-handler.ngrok-free.app/status
-  ```
-- **Response Example:**
+Forwards requests to various workflow models (ER Triage, Lab Analysis, ECG Analysis, Diabetes Prediction).
+
+- **Endpoint:** `/workflow/forward`
+- **Method:** POST
+- **Content-Type:** `application/json`
+- **Request Format:**
   ```json
   {
-    "status": "ok",
-    "message": "Node handler is running",
-    "active_nodes": 3,
-    "llm_nodes": 1,
-    "ml_nodes": 2
+    "model": "er_triage|lab_analysis|ecg_analysis|diabetes",
+    "data": {
+      // Model-specific data (see examples below)
+    }
   }
   ```
+
+#### ER Triage Example:
+
+```json
+{
+  "model": "er_triage",
+  "data": {
+    "vitals": {
+      "heart_rate": 120,
+      "blood_pressure_systolic": 140,
+      "oxygen_saturation": 95
+    },
+    "symptoms": ["chest pain", "shortness of breath"]
+  }
+}
+```
+
+#### Lab Analysis Example:
+
+```json
+{
+  "model": "lab_analysis",
+  "data": {
+    "results": {
+      "WBC": 11.5,
+      "HGB": 14.2,
+      "TROP": 0.02
+    }
+  }
+}
+```
+
+#### ECG Analysis Example:
+
+```json
+{
+  "model": "ecg_analysis",
+  "data": {
+    "ecg_signal": "base64_encoded_ecg_data",
+    "sampling_rate": 500,
+    "leads": ["II", "V1", "V2", "V3", "V4", "V5", "V6"]
+  }
+}
+```
+
+#### Diabetes Prediction Example:
+
+```json
+{
+  "model": "diabetes",
+  "data": {
+    "gender": "Male",
+    "age": 45,
+    "hypertension": 0,
+    "heart_disease": 0,
+    "smoking_history": "never",
+    "bmi": 25.5,
+    "HbA1c_level": 5.7,
+    "blood_glucose_level": 120
+  }
+}
+```
+
+- **Curl Example (ER Triage):**
+
+  ```bash
+  curl -X POST \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "er_triage",
+      "data": {
+        "vitals": {
+          "heart_rate": 120,
+          "blood_pressure_systolic": 140,
+          "oxygen_saturation": 95
+        },
+        "symptoms": ["chest pain", "shortness of breath"]
+      }
+    }' \
+    https://your-node-handler.ngrok-free.app/workflow/forward
+  ```
+
+- **Response Format:**
+  ```json
+  {
+    "status": "success",
+    "model": "er_triage",
+    "result": {
+      // Model-specific response (same as direct API calls)
+    }
+  }
+  ```
+
+### 5. Status Call (Node Handler Health)
+
+**Endpoint**: `/status`  
+**Method**: GET
+
+**Response Format**:
+
+```json
+{
+  "status": "ok",
+  "message": "Node handler service is running"
+}
+```
+
+**Example Curl Command**:
+
+```bash
+curl https://your-node-handler.ngrok-free.app/status
+```
 
 ## Testing
 
@@ -525,10 +950,11 @@ Returns the health/status of the node handler and registered nodes.
 We've included a comprehensive test script that verifies all endpoints:
 
 ```bash
-python test_endpoints.py 
+python test_endpoints.py
 ```
 
 This will:
+
 - Test the health of both services
 - Test the chat endpoint with a medical query
 - Test the typing analysis endpoint
@@ -543,6 +969,7 @@ You can also manually test each endpoint using the curl commands provided in the
 For systems with limited RAM:
 
 1. Adjust model context size in `singleton.py`:
+
    ```python
    n_ctx=1024  # Reduces memory usage but may affect model performance
    ```
@@ -557,21 +984,25 @@ For systems with limited RAM:
 
 ### Common Issues
 
-1. **LLM Initialization Failure**: 
+1. **LLM Initialization Failure**:
+
    - Ensure you have installed llama-cpp-python with the correct optimizations
    - Verify the model paths in `singleton.py`
    - Check that models are properly downloaded
 
 2. **Audio Processing Errors**:
+
    - Make sure FFmpeg is installed: `brew install ffmpeg` (Mac) or `apt install ffmpeg` (Linux)
    - Ensure audio files are in WAV format with valid sample rates
 
 3. **"Connection refused" errors**:
+
    - Verify both services are running
    - Check ML_MODELS_URL in .env matches the actual port (default: 9000)
    - Ensure ports aren't being used by other applications
 
 4. **Ngrok Issues**:
+
    - Verify ngrok auth tokens are valid
    - Install ngrok if missing: `pip install ngrok`
    - Check for multiple tokens in .env if you see "session limit reached" errors
@@ -663,44 +1094,49 @@ The system includes a comprehensive performance monitoring tool (`monitor.py` (i
 ### Running the Monitor
 
 1. Make sure the monitoring script is executable:
+
    ```bash
    chmod +x monitor.py
    ```
 
 2. Start the monitor:
-   
+
    **Interactive Mode** (shows real-time dashboard):
+
    ```bash
    ./monitor.py
    ```
-   
+
    **Background Mode** (runs in the background):
+
    ```bash
    ./monitor_wrapper.sh start
    ```
 
 3. Managing the monitor in background mode:
+
    ```bash
    # Check monitor status
    ./monitor_wrapper.sh status
-   
+
    # Stop the monitor
    ./monitor_wrapper.sh stop
-   
+
    # Restart the monitor
    ./monitor_wrapper.sh restart
    ```
 
 4. Optional command-line arguments:
+
    ```bash
    # Monitor with a custom interval (in seconds)
    ./monitor.py --interval=30
    # or in background mode:
    ./monitor_wrapper.sh start --interval=30
-   
+
    # Monitor specific service URLs
    ./monitor.py --llm-url=https://your-llm-service-url.ngrok-free.app --ml-url=https://your-ml-models-url.ngrok-free.app
-   
+
    # Save logs to a file
    ./monitor.py --log-file=monitor.log
    ```
@@ -726,6 +1162,7 @@ Red indicators show problems that need attention, while green indicates healthy 
 The monitoring system includes a configurable alerting system that can notify you when services are unhealthy or performance thresholds are exceeded.
 
 1. Configure alerts by editing `alert_config.json`:
+
    ```json
    {
      "alerts": {
@@ -743,7 +1180,7 @@ The monitoring system includes a configurable alerting system that can notify yo
      },
      "notification_channels": {
        "console": { "enabled": true },
-       "log_file": { 
+       "log_file": {
          "enabled": true,
          "path": "logs/alerts.log"
        },
@@ -754,12 +1191,14 @@ The monitoring system includes a configurable alerting system that can notify yo
    ```
 
 2. Available alert types:
+
    - **service_down**: Triggers when a service goes down
    - **high_latency**: Triggers when endpoint response times exceed threshold
    - **resource_usage**: Triggers when CPU or memory usage exceeds threshold
    - **process_missing**: Triggers when a critical process is not running
 
 3. Available notification channels:
+
    - **console**: Displays alerts in the console
    - **log_file**: Writes alerts to a log file
    - **email**: Sends email notifications (requires configuration)
@@ -773,4 +1212,4 @@ Please refer to the development team for contribution guidelines.
 
 ## License
 
-Proprietary - All rights reserved. 
+Proprietary - All rights reserved.

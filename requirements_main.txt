@@ -37,3 +37,6 @@ einops
 scikit-image
 fvcore
 fire
+opencv-python
+joblib
+numpy
