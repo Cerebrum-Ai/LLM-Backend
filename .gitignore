@@ -21,8 +21,7 @@ wheels/
 .installed.cfg
 *.egg
 *.pkl
-!models/image/MedViT/
-!models/image/MedViT/**
+
 
 # Virtual Environment
 venv/
