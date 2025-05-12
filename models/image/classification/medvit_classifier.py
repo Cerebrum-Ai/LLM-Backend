@@ -192,7 +192,7 @@ class MedViTClassifier:
         device = self.device
         self.model.train()
         try:
-            for epoch in range(3):  # Limit to 3 epochs
+            for epoch in range(6):  # Limit to 3 epochs
                 running_loss = 0.0
                 for batch_idx, (images, labels) in enumerate(train_loader):
                     images = images.to(self.device, non_blocking=True)
