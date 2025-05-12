@@ -2,7 +2,10 @@
 Train MedViTClassifier on all allowed MedMNIST datasets with textual labels.
 Run: python train_all_medvit.py
 """
-from LLM_Backend.models.image.classification.medvit_classifier import MedViTClassifier
+import sys
+sys.path.append('../../..')  # Adjust the number of levels as needed
+
+from models.image.classification.medvit_classifier import MedViTClassifier
 
 ALLOWED_DATASETS = [
      'bloodmnist', 'breastmnist', 'chestmnist', 'dermamnist',
