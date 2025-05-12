@@ -5,7 +5,8 @@ Run: python train_all_medvit.py
 from medvit_classifier import MedViTClassifier
 
 ALLOWED_DATASETS = [
-    'dermamnist', 'pathmnist'  
+    'breastmnist', 'chestmnist', 'dermamnist',
+     'octmnist', 'pathmnist', 'pneumoniamnist',  
 ]
 
 if __name__ == "__main__":
