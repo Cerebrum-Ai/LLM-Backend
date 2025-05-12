@@ -1,20 +1,13 @@
 import torch
 from PIL import Image
 from torchvision import transforms
-from models.image.classification.MedViT.MedViT import MedViT_small
+from MedViT.MedViT import MedViT_small
 import medmnist
 from medmnist import INFO
 import numpy as np
 
 # Human-readable label maps for MedMNIST datasets
 MEDMNIST_LABELS = {
-    "bloodmnist": {
-        "0": "neutrophil",
-        "1": "eosinophil",
-        "2": "basophil",
-        "3": "lymphocyte",
-        "4": "monocyte"
-    },
     "breastmnist": {
         "0": "normal",
         "1": "malignant"
@@ -50,32 +43,6 @@ MEDMNIST_LABELS = {
         "2": "Drusen",
         "3": "Normal"
     },
-    "organamnist": {
-        "0": "spleen",
-        "1": "lung",
-        "2": "kidney",
-        "3": "liver",
-        "4": "brain",
-        "5": "prostate",
-        "6": "bowel",
-        "7": "muscle",
-        "8": "eye"
-    },
-    "organcmnist": {
-        "0": "colon",
-        "1": "esophagus",
-        "2": "kidney",
-        "3": "lung",
-        "4": "prostate",
-        "5": "stomach",
-        "6": "uterus"
-    },
-    "organsmnist": {
-        "0": "spleen",
-        "1": "lung",
-        "2": "kidney",
-        "3": "liver"
-    },
     "pathmnist": {
         "0": "adipose",
         "1": "background",
@@ -103,9 +70,8 @@ class MedViTClassifier:
     def preload_all_models(weights_dir="models/image/classification/Models"):
         import os
         ALLOWED_DATASETS = [
-            'bloodmnist', 'breastmnist', 'chestmnist', 'dermamnist',
-            'octmnist', 'organamnist', 'organcmnist',
-            'organsmnist', 'pathmnist', 'pneumoniamnist',
+            'breastmnist', 'chestmnist', 'dermamnist',
+            'octmnist', 'pathmnist', 'pneumoniamnist',
         ]
         for dataset in ALLOWED_DATASETS:
             if dataset in MedViTClassifier._MODEL_CACHE:
@@ -126,9 +92,8 @@ class MedViTClassifier:
         import os
         results = {}
         ALLOWED_DATASETS = [
-            'bloodmnist', 'breastmnist', 'chestmnist', 'dermamnist',
-            'octmnist', 'organamnist', 'organcmnist',
-            'organsmnist', 'pathmnist', 'pneumoniamnist', 
+            'breastmnist', 'chestmnist', 'dermamnist',
+            'octmnist', 'pathmnist', 'pneumoniamnist', 
         ]
         for dataset in ALLOWED_DATASETS:
             if dataset not in MedViTClassifier._MODEL_CACHE:
@@ -156,9 +121,8 @@ class MedViTClassifier:
         self.data_flag = data_flag  # Store dataset name for correct label mapping
         # Only allow datasets with textual (non-numeric) labels (hardcoded)
         ALLOWED_DATASETS = [
-            'bloodmnist', 'breastmnist', 'chestmnist', 'dermamnist',
-            'octmnist', 'organamnist', 'organcmnist',
-            'organsmnist', 'pathmnist', 'pneumoniamnist', 
+            'breastmnist', 'chestmnist', 'dermamnist',
+            'octmnist', 'pathmnist', 'pneumoniamnist', 
         ]
         if data_flag not in ALLOWED_DATASETS:
             raise ValueError(f"Dataset '{data_flag}' is not allowed: only datasets with textual (non-numeric) labels are supported. Allowed: {ALLOWED_DATASETS}")

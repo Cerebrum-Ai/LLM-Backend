@@ -2,15 +2,11 @@
 Train MedViTClassifier on all allowed MedMNIST datasets with textual labels.
 Run: python train_all_medvit.py
 """
-import sys
-sys.path.append('../../..')  # Adjust the number of levels as needed
-
-from models.image.classification.medvit_classifier import MedViTClassifier
+from medvit_classifier import MedViTClassifier
 
 ALLOWED_DATASETS = [
-     'bloodmnist', 'breastmnist', 'chestmnist', 'dermamnist',
-     'octmnist', 'organamnist', 'organcmnist',
-     'organsmnist', 'pathmnist', 'pneumoniamnist',  
+    'breastmnist', 'chestmnist', 'dermamnist',
+     'octmnist', 'pathmnist', 'pneumoniamnist',  
 ]
 
 if __name__ == "__main__":
@@ -28,7 +24,12 @@ if __name__ == "__main__":
             already_trained.append(flag)
             continue
         try:
-            MedViTClassifier.get_instance(data_flag=flag, weights_path=weights_path)
+            # Create an instance directly instead of using get_instance
+            classifier = MedViTClassifier(data_flag=flag, weights_path=weights_path)
+            # Train the model
+            classifier.train()
+            # Save the model
+            classifier.save_model()
             trained.append(flag)
             print(f"Successfully trained {flag}.")
         except Exception as e:
