@@ -5,13 +5,30 @@ from singleton import LLMManager
 import requests
 from langchain_core.prompts import PromptTemplate
 import json
-
+import os
+try:
+    from openrouter_llm import OpenRouterLLMManager
+except ImportError:
+    pass
+llm_instance = None
 # Enable in-memory caching for repeated queries
 set_llm_cache(InMemoryCache())
+USE_OPENROUTER = os.environ.get("USE_OPENROUTER", "false").lower() == "true"
+def set_llm_instance(instance):
+    """Set the global LLM instance"""
+    global llm_instance
+    llm_instance = instance
+
+def get_llm_instance():
+    """Get the appropriate LLM instance based on environment variable"""
+    global llm_instance
+    if not llm_instance:
+        raise RuntimeError("LLM instance not initialized")
+    return llm_instance
 
 def init_llm_input(question, image=None, ml_results=None):
     """Process input with multimodal LLM"""
-    llm_manager = LLMManager.get_instance()
+    llm_manager = get_llm_instance()
     
     # Format ML results for LLM context if available
     ml_context = ""
@@ -78,7 +95,7 @@ Answer: """
 
 def post_llm_input(initial_diagnosis, question, context, ml_results=None):
     """Process follow-up with context"""
-    llm_manager = LLMManager.get_instance()
+    llm_manager = get_llm_instance()
     
     # Format ML results for LLM context if available
     ml_context = ""

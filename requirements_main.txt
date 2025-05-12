@@ -11,4 +11,4 @@ python-dotenv
 scikit-learn
 tensorflow
 tf-keras
-
+langchain-openai

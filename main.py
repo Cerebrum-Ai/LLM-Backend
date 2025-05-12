@@ -22,7 +22,8 @@ from models.workflow.er_triage import ERTriageModel
 from models.workflow.lab_analysis import LabAnalysisModel
 from models.workflow.alert_system import AlertSystem
 from datetime import datetime
-
+from openrouter_llm import OpenRouterLLMManager
+from llm_chat import set_llm_instance 
 load_dotenv()
 # Add these constants at the top of the file
 NODE_HANDLER_URL = os.environ.get("NODE_HANDLER_URL")
@@ -32,7 +33,7 @@ auth_tokens_str = os.environ.get("NGROK_AUTH_TOKENS")
 # Add this global variable at the top with other constants
 current_ngrok_url = None
 i = 0  # Initialize index for auth tokens
-
+USE_OPENROUTER = os.environ.get("USE_OPENROUTER", "false").lower() == "true"
 # Check required environment variables
 if not auth_tokens_str:
     print("Error: NGROK_AUTH_TOKENS environment variable not set in .env file or environment.")
@@ -45,6 +46,11 @@ if not NODE_HANDLER_URL:
     print("Please create a .env file in the project root and add the variable:")
     print("NODE_HANDLER_URL=http://your-node-handler-url")
     sys.exit(1) # Exit if the variable is not set
+
+if USE_OPENROUTER and not os.environ.get("OPENROUTER_API_KEY"):
+    print("Error: OPENROUTER_API_KEY environment variable not set but USE_OPENROUTER=true")
+    print("Please add OPENROUTER_API_KEY to your .env file")
+    sys.exit(1)
 
 auth = auth_tokens_str.split(',')
 
@@ -68,7 +74,6 @@ def initialize_llm():
     global llm_instance, vector_db_instance, is_initialized
     try:
         
-        
         # Initialize Vector DB
         print("Initializing Vector Database...")
         vector_db_instance = VectorDBManager.get_instance()
@@ -76,13 +81,27 @@ def initialize_llm():
             raise RuntimeError("Failed to initialize VectorDB")
         
         # Initialize LLM
-        print("Initializing LLM...")
+        print(f"Initializing LLM (Using OpenRouter: {USE_OPENROUTER})...")
+        if USE_OPENROUTER:
+            llm_instance = OpenRouterLLMManager.get_instance()
+            if not llm_instance.llm:
+                raise RuntimeError("Failed to initialize OpenRouter LLM")
+            set_llm_instance(llm_instance)  
+            print("OpenRouter LLM initialized successfully")
+            is_initialized = True
+            return True
+        
+        # Only initialize local LLM if not using OpenRouter
         llm_instance = LLMManager.get_instance()
         if not llm_instance.llm:
-            raise RuntimeError("Failed to initialize LLM")
+            raise RuntimeError("Failed to initialize Local LLM")
+        set_llm_instance(llm_instance) 
+        print("Local LLM initialized successfully")
+        
         print("LLM initialized successfully")
         
         is_initialized = True
+        chat_llm_instance = llm_instance
         print("All components initialized and ready")
     except Exception as e:
         print(f"Error initializing components: {str(e)}")
@@ -157,8 +176,9 @@ def init(state: State):
 def retrieve(state: State):
     """Vector DB lookup stage"""
     try:
-        print(f"Looking up similar data in vector DB for: {state['answer'][:50]}...")
-        docs = vector_db_instance.vector_store.similarity_search(state["answer"], k=1)
+        answer_text = state['answer'] if isinstance(state['answer'], str) else str(state['answer'])
+        print(f"Looking up similar data in vector DB for: {answer_text[:50]}...")
+        docs = vector_db_instance.vector_store.similarity_search(answer_text, k=1)
         state["context"] = docs
         vectordb_results = "\n".join([doc.page_content for doc in docs])
         state["vectordb_results"] = vectordb_results
@@ -204,7 +224,8 @@ def generate(state: State):
             ml_results=ml_results
         )
         
-        print(f"Final response generated: {final_answer[:100]}...")
+        final_answer_text = final_answer if isinstance(final_answer, str) else str(final_answer)
+        print(f"Final response generated: {final_answer_text[:100]}...")
         state["final_analysis"] = final_answer
         
         return {
@@ -247,6 +268,9 @@ graph = graph_builder.compile()
 @check_initialization
 def chat():
     try:
+        llm_type = "OpenRouter" if USE_OPENROUTER else "Local"
+        print(f"Using {llm_type} LLM for processing")
+
         question = None
         image = None
         gait = None
@@ -326,13 +350,33 @@ def chat():
         if "session_id" in initial_state:
             llm_instance.delete_session(initial_state["session_id"])
 
+         # Ensure all values are JSON serializable
+        initial_diagnosis = response.get("initial_diagnosis", "")
+        if hasattr(initial_diagnosis, 'content'):
+            initial_diagnosis = initial_diagnosis.content
+        elif not isinstance(initial_diagnosis, str):
+            initial_diagnosis = str(initial_diagnosis)
+            
+        vectordb_results = response.get("vectordb_results", "")
+        if hasattr(vectordb_results, 'content'):
+            vectordb_results = vectordb_results.content
+        elif not isinstance(vectordb_results, str):
+            vectordb_results = str(vectordb_results)
+            
+        final_analysis = response.get("final_analysis", "")
+        if hasattr(final_analysis, 'content'):
+            final_analysis = final_analysis.content
+        elif not isinstance(final_analysis, str):
+            final_analysis = str(final_analysis)
+
+
         # Format API response
         return jsonify({
             'status': 'success',
             'analysis': {
-                'initial_diagnosis': response.get("initial_diagnosis"),
-                'vectordb_results': response.get("vectordb_results", ""),
-                'final_analysis': response.get("final_analysis"),
+                'initial_diagnosis': initial_diagnosis,
+                'vectordb_results': vectordb_results,
+                'final_analysis': final_analysis,
             }
         })
           
@@ -534,15 +578,14 @@ def handle_deregister():
 
 def send_heartbeat():
     """Send periodic heartbeat to node handler"""
-    llm_manager = LLMManager.get_instance()
-    global current_ngrok_url
+    global current_ngrok_url,llm_instance
     consecutive_failures = 0
     max_consecutive_failures = 1  # Reduced from 3 to 1 to be more responsive
     reconnection_in_progress = False
     
     while not shutdown_event.is_set():
         try:
-            if llm_manager.is_inferencing:  # Using the property correctly
+            if llm_instance.is_inferencing:  # Using the property correctly
                 time.sleep(5)  # Wait briefly before checking again
                 continue
             if reconnection_in_progress:
