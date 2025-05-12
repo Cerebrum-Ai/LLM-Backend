@@ -21,6 +21,7 @@ wheels/
 .installed.cfg
 *.egg
 *.pkl
+!models/image/classification/models/** 
 
 
 # Virtual Environment
