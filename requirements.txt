@@ -8,4 +8,7 @@ numpy
 pandas
 scikit-learn
 joblib
+httpx
+h2
+
 
