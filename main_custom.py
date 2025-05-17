@@ -746,6 +746,9 @@ def send_heartbeat():
 
     while not shutdown_event.is_set():
         try:
+            if llm_instance.is_inferencing:  # Using the property correctly
+                time.sleep(5)  # Wait briefly before checking again
+                continue
             if reconnection_in_progress:
                 time.sleep(HEARTBEAT_INTERVAL)
                 continue
