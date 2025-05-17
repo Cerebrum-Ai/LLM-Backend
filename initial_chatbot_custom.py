@@ -311,7 +311,12 @@ def handle_deregister():
     if data and data.get('url') == current_tunnel_url:
         print("Received deregister request from node handler. Starting reconnection attempts...")
         reconnection_in_progress.set()
-        threading.Thread(target=handle_node_handler_disconnect, daemon=True).start()
+        def delayed_reconnect():
+            wait_time = 5  # seconds (adjust as needed)
+            print(f"Waiting {wait_time} seconds before starting reconnection attempts...")
+            time.sleep(wait_time)
+            handle_node_handler_disconnect()
+        threading.Thread(target=delayed_reconnect, daemon=True).start()
         return jsonify({'status': 'accepted', 'message': 'Node is preparing for reconnection'}), 202
     return jsonify({'error': 'Invalid request'}), 400
 

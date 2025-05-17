@@ -213,7 +213,7 @@ class MLModels:
                     print(f"Number of keystrokes: {len(keystrokes)}")
                     if keystrokes:
                         print(f"First keystroke: {keystrokes[0]}")
-                        print(f"Keys in first keystroke: {list(keystroke[0].keys())}")
+                        print(f"Keys in first keystroke: {list(keystrokes[0].keys())}")
 
                         # Convert press_time/release_time to timeDown/timeUp format for compatibility
                         for keystroke in keystrokes:
