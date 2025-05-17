@@ -26,7 +26,7 @@ app = Flask(__name__)
 current_tunnel_url = None
 shutdown_event = threading.Event()
 localtunnel_process = None
-
+reconnection_in_progress = threading.Event()
 # ==========================================
 # Chatbot Logic
 # ==========================================
@@ -304,6 +304,17 @@ def status():
         }
     })
 
+@app.route('/deregister', methods=['POST'])
+def handle_deregister():
+    global reconnection_in_progress
+    data = request.json
+    if data and data.get('url') == current_tunnel_url:
+        print("Received deregister request from node handler. Starting reconnection attempts...")
+        reconnection_in_progress.set()
+        threading.Thread(target=handle_node_handler_disconnect, daemon=True).start()
+        return jsonify({'status': 'accepted', 'message': 'Node is preparing for reconnection'}), 202
+    return jsonify({'error': 'Invalid request'}), 400
+
 @app.route('/chat', methods=['POST'])
 def chat():
     """Main chat endpoint that orchestrates the processing flow"""
@@ -506,14 +517,14 @@ def deregister_from_node_handler():
 
 def send_heartbeat():
     """Send periodic heartbeat to node handler"""
-    global current_tunnel_url, HEARTBEAT_INTERVAL  # Use the renamed variable
+    global current_tunnel_url, HEARTBEAT_INTERVAL, reconnection_in_progress  # Use the renamed variable
     consecutive_failures = 0
     max_consecutive_failures = 1  # Respond quickly to disconnections
-    reconnection_in_progress = False
+    
 
     while not shutdown_event.is_set():
         try:
-            if reconnection_in_progress:
+            if reconnection_in_progress.is_set():
                 time.sleep(HEARTBEAT_INTERVAL)
                 continue
 
@@ -525,17 +536,31 @@ def send_heartbeat():
             )
             if response.status_code != 200:
                 print(f"Heartbeat not acknowledged: {response.text}")
-            consecutive_failures = 0
+                consecutive_failures += 1
+                reconnection_in_progress.set()
+                if consecutive_failures >= max_consecutive_failures:
+                    print("\n=== Node Handler Connection Lost ===")
+                    print("Error detected. Starting reconnection process...")
+                    reconnection_in_progress.set()
+                    if handle_node_handler_disconnect():
+                        consecutive_failures = 0
+                        reconnection_in_progress.clear()
+                        print("✓ Successfully reconnected to node handler")
+                time.sleep(HEARTBEAT_INTERVAL)
+                continue
+            else:
+                consecutive_failures = 0
         except Exception as e:
             print(f"Heartbeat error: {str(e)}")
             consecutive_failures += 1
+            reconnection_in_progress.set()
             if consecutive_failures >= max_consecutive_failures:
                 print("\n=== Node Handler Connection Lost ===")
                 print("Error detected. Starting reconnection process...")
-                reconnection_in_progress = True
+                reconnection_in_progress.set()
                 if handle_node_handler_disconnect():
                     consecutive_failures = 0
-                    reconnection_in_progress = False
+                    reconnection_in_progress.clear()
                     print("✓ Successfully reconnected to node handler")
         time.sleep(HEARTBEAT_INTERVAL)
 
