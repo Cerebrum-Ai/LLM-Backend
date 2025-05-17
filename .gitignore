@@ -21,8 +21,10 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+audio_emotion_model.pkl 
+*.DS_Store
 !models/image/classification/models/** 
+medical_data_*
 
 
 # Virtual Environment
