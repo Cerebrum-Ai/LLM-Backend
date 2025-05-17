@@ -32,8 +32,8 @@ class OpenRouterLLMManager:
                 raise ValueError("OPENROUTER_API_KEY environment variable not set")
             
             # Initialize main LLM with vision capabilities
-            model_name = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free")
-            
+            model_name = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-4-maverick:free")
+            medical_model_name_reasoning = os.environ.get("OPENROUTER_MODEL_final","meta-llama/llama-4-scout:free" )
             # Configure the LLM to work with the pipe operator using OpenAI's ChatOpenAI with OpenRouter base URL
             self.llm = ChatOpenAI(
                 model=model_name,
@@ -45,17 +45,17 @@ class OpenRouterLLMManager:
             )
             
             # Initialize medical LLM (can be the same model or different)
-            medical_model_name = os.environ.get("OPENROUTER_MEDICAL_MODEL", model_name)
+            medical_model_name_reasoning = os.environ.get("OPENROUTER_MEDICAL_final", medical_model_name_reasoning)
             self.medical_llm = ChatOpenAI(
-                model=medical_model_name,
+                model=medical_model_name_reasoning,
                 openai_api_key=api_key,
                 openai_api_base="https://openrouter.ai/api/v1",
                 temperature=0.5,  # Lower temperature for medical responses
-                max_tokens=196,
+                max_tokens=512,
             )
             
             print(f"OpenRouter LLM initialized with model: {model_name}")
-            print(f"OpenRouter Medical LLM initialized with model: {medical_model_name}")
+            print(f"OpenRouter Medical LLM initialized with model: {medical_model_name_reasoning}")
             return True
         except Exception as e:
             print(f"Error initializing OpenRouter LLM: {str(e)}")
