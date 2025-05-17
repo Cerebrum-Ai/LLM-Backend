@@ -60,8 +60,8 @@ The system consists of two main components that work together:
 
 ## Prerequisites
 
-- Python 3.9+ (3.13 recommended)
-- Conda environment manager (recommended)
+- Python 3.12.5 (3.12 recommended)
+- Conda environment manager / venv environment manager (recommended)
 - GGUF format LLM models:
   - `Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf` (for medical analysis)
   - `phi-2.Q5_K_M.gguf` (for general text processing)
