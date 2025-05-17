@@ -24,7 +24,6 @@ wheels/
 audio_emotion_model.pkl 
 *.DS_Store
 !models/image/classification/models/** 
-medical_data_*
 
 
 # Virtual Environment
