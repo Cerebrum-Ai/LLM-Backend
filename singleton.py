@@ -86,7 +86,7 @@ class LLMManager:
             self._multimodal_llm = LlamaCpp(
                 model_path=r"Bio-Medical-MultiModal-Llama-3-8B-V1.Q4_K_M.gguf",
                 callback_manager=callback_manager,
-                max_tokens=45,
+                max_tokens=348,
                 temperature=0.5,
                 top_p=0.95,
                 repeat_penalty=1.1,
@@ -107,7 +107,7 @@ class LLMManager:
             self._medical_llm = LlamaCpp(
                 model_path=r"phi-2.Q5_K_M.gguf",
                 callback_manager=callback_manager,
-                max_tokens=75,
+                max_tokens=560,
                 temperature=0.3,
                 top_p=0.95,
                 repeat_penalty=1.1,

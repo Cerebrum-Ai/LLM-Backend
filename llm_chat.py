@@ -47,36 +47,39 @@ def init_llm_input(question, image=None, ml_results=None):
         template = """Question: {question}
 This is the typing,audio, and other data that has been analysed by ml models utilize  this to make the diagnosis more accurate:
 {ml_context}
+Also include the reasoning behind the decision in ().
 
 
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
 1. Identify potential diseases based on the question, image data, and any ML analysis results.
-2. List ONLY disease names (maximum 5).
-3. Provide the disease names as a comma-separated list.
-4. Do not include any introductory text, explanations, or additional information.
+2. List ONLY disease names (maximum 5).(add detailed reasoning for the diseases explain it in detail ( like youre explaining to a patient))
+3. Provide the disease names as a comma-separated list.(add detailed reasoning for the diseases explain it in detail ( like youre explaining to a patient))
+4. Do not include any introductory text, or additional information but include reasoning(keep it detailed( like youre explaining to a patient)) .
 5. Do not include the question, instructions, or attention text in the answer.
-6. Limit the response to 10 words or less.
+6. Limit the response to 10 words or less.(add detailed reasoning for the diseases explain it in detail ( like youre explaining to a patient))
 7. All questions are purely medical and require only the disease names.
-8. Never return empty,always return a diagnosis from the data
+8. Never return empty,always return a diagnosis from the data.
+9. Return reasoning in brackets (keep it detailed ( like youre explaining to a patient)).
 
 Answer: """
     else:
         template = """Question: {question}, image_url: {image_url}
 This is the typing,audio, and other data that has been analysed by ml models utilize  this to make the diagnosis more accurate:
 {ml_context}
+Also include the reasoning behind the decision in ().
 
 ATTENTION: THIS IS A LIST-ONLY RESPONSE.
 Instructions:
 1. Identify potential diseases based on the question, image data, and any ML analysis results.
-2. List ONLY disease names (maximum 5).
-3. Provide the disease names as a comma-separated list.
-4. Do not include any introductory text, explanations, or additional information.
+2. List ONLY disease names (maximum 5).(add detailed reasoning for the diseases explain it in detail ( like youre explaining to a patient) )
+3. Provide the disease names as a comma-separated list.(add detailed reasoning for the diseases explain it in detail ( like youre explaining to a patient) )
+4. Do not include any introductory text, or additional information but include reasoning (keep it detailed ( like youre explaining to a patient)).
 5. Do not include the question, instructions, or attention text in the answer.
-6. Limit the response to 10 words or less.
+6. Limit the response to 10 words or less.(add detailed reasoning for the diseases explain it in detail ( like youre explaining to a patient))
 7. All questions are purely medical and require only the disease names.
-8. Never return empty,always return a diagnosis from the data
-
+8. Never return empty,always return a diagnosis from the data.
+9. Return reasoning in brackets (explain it in detail ( like youre explaining to a patient)) .
 Answer: """
     
     prompt = PromptTemplate.from_template(template)
@@ -114,10 +117,10 @@ Context: {context} ( data from a vector database regarding the initial diagnosis
 Initial Diagnosis: {initial_diagnosis} (made by a medical model)
 This is the typing,audio, and other data that has been analysed by ml models utilize  this to make the diagnosis more accurate:
 {ml_context}
-
+Also include the reasoning behind the decision in ().
 Instructions: Provide a concise medical analysis following this exact format :
 
-Diagnosis: [most relevant condition, always provide a diagnosis from the data never return empty]
+Diagnosis: [most relevant condition, always provide a diagnosis from the data never return empty](reasoning in brackets keep it detailed)
 Symptoms: [list up to 5 key symptoms, comma-separated]
 Treatment: [list up to 3 primary treatments, comma-separated]
 Emotional State: [if detected in audio analysis]

@@ -40,7 +40,7 @@ class OpenRouterLLMManager:
                 openai_api_key=api_key,
                 openai_api_base="https://openrouter.ai/api/v1",
                 temperature=0.7,
-                max_tokens=196,
+                max_tokens=1024,
                 
             )
             
@@ -51,7 +51,7 @@ class OpenRouterLLMManager:
                 openai_api_key=api_key,
                 openai_api_base="https://openrouter.ai/api/v1",
                 temperature=0.5,  # Lower temperature for medical responses
-                max_tokens=512,
+                max_tokens=2048,
             )
             
             print(f"OpenRouter LLM initialized with model: {model_name}")
